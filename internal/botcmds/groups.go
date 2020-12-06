@@ -17,6 +17,7 @@ func Groups(session *discordgo.Session, message *discordgo.MessageCreate, env *b
   }
   server := strings.Title(strings.ToLower(strings.TrimSpace(strTokens[1])))
   // Search for a matching server.
+  env.AuditLock.RLock()
   index := -1
   for i := range env.Audit.Servers {
     if server == env.Audit.Servers[i].Name {
@@ -27,9 +28,11 @@ func Groups(session *discordgo.Session, message *discordgo.MessageCreate, env *b
     session.ChannelMessageSend(message.ChannelID, "A server with that name was not found.")
     return
   }
+  // With server index found, construct a formatted strings of the groups.
   groups := ""
   for _, g := range env.Audit.Servers[index].Groups {
     groups = groups + fmt.Sprintf("```ini\n%s```", g.String())
   }
+  env.AuditLock.RUnlock()
   session.ChannelMessageSend(message.ChannelID, groups)
 }

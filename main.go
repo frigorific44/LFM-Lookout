@@ -1,22 +1,23 @@
 package main
 
 import (
+	"lfm_lookout/internal/audit"
+	"lfm_lookout/internal/botcmds"
+	"lfm_lookout/internal/botenv"
+
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"reflect"
 
 	dg "github.com/bwmarrin/discordgo"
 	logrus "github.com/sirupsen/logrus"
-
-	"lfm_lookout/internal/audit"
-	"lfm_lookout/internal/botcmds"
-	"lfm_lookout/internal/botenv"
 )
 
 
@@ -51,7 +52,8 @@ func main() {
 	// Instantiate BotEnv containing information for commands.
 	// repo := lodb.NewLoRepo(&log, &db)
 	// defer repo.Close()
-	botEnv := botenv.BotEnv{Log: log}
+	auditLock := new(sync.RWMutex)
+	botEnv := botenv.BotEnv{Log: log, AuditLock: auditLock}
 	// Load the config.json file.
 	io, err := ioutil.ReadFile("config.json")
 	if err != nil {
@@ -60,11 +62,11 @@ func main() {
 	// Load JSON into botenv:config.
 	json.Unmarshal(io, &botEnv.Config)
 	// Get current groups from playeraudit.com
-	audit, err := audit.Groups()
+	currAudit, err := audit.Groups()
 	if err != nil {
 		log.Fatal(err)
 	}
-	botEnv.Audit = audit
+	botEnv.Audit = currAudit
 	// Create a new Discord session using the provided bot token.
 	bot, err := dg.New("Bot " + botEnv.Config.Token)
 	if err != nil {
@@ -82,12 +84,36 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Debug(botcmds.Functions)
+	// Periodically update botEnv.Audit.
+	auditTicker := time.NewTicker(time.Second * 31)
+	quit := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <- auditTicker.C:
+				botEnv.AuditLock.Lock()
+				// Get current groups from playeraudit.com
+				newAudit, err := audit.Groups()
+				if err != nil {
+					botEnv.Log.Error(err)
+				}
+				botEnv.Audit = newAudit
+				botEnv.Log.Info("Audit updated.")
+				botEnv.AuditLock.Unlock()
+			case <- quit:
+				auditTicker.Stop()
+				return
+			}
+		}
+	} ()
+	defer close(quit)
 	// Wait here until CTRL-C or other term signal is received.
 	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
 	<-sc
 	// Cleanly close down the Discord session.
+	quit <- true
 	bot.Close()
 }
 
