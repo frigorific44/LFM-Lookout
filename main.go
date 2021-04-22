@@ -4,6 +4,7 @@ import (
 	"lfm_lookout/internal/audit"
 	"lfm_lookout/internal/botcmds"
 	"lfm_lookout/internal/botenv"
+	"lfm_lookout/internal/lodb"
 
 	"encoding/json"
 	"fmt"
@@ -16,10 +17,16 @@ import (
 	"time"
 	"reflect"
 
+	"github.com/blevesearch/bleve"
 	dg "github.com/bwmarrin/discordgo"
-	logrus "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
+
+type SearchableGroup struct {
+	Server string
+	Group audit.Group
+}
 
 func main() {
 	// Open file for logging.
@@ -37,21 +44,6 @@ func main() {
 		Level: logrus.DebugLevel,
 	}
 	log.Info("Logging to file.")
-	// Prepare the database.
-	// db, err := sql.Open("sqlite3",
-	// 	"./lookout.db")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer db.Close()
-	// Check that the database is available and accessible.
-	// err = db.Ping()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// Instantiate BotEnv containing information for commands.
-	// repo := lodb.NewLoRepo(&log, &db)
-	// defer repo.Close()
 	auditLock := new(sync.RWMutex)
 	botEnv := botenv.BotEnv{Log: log, AuditLock: auditLock}
 	// Load the config.json file.
@@ -61,6 +53,12 @@ func main() {
 	}
 	// Load JSON into botenv:config.
 	json.Unmarshal(io, &botEnv.Config)
+	// Initialize LoRepo
+	repo, err := lodb.NewLoRepo("/tmp/badger")
+	if err != nil {
+		log.Panic(err)
+	}
+	// TODO: Clean up orphan query and return entries.
 	// Get current groups from playeraudit.com
 	currAudit, err := audit.Groups()
 	if err != nil {
@@ -90,16 +88,84 @@ func main() {
 	go func() {
 		for {
 			select {
+			// Update audit, cull expired queries, then run queries on audit
 			case <- auditTicker.C:
-				botEnv.AuditLock.Lock()
-				// Get current groups from playeraudit.com
+				// Update audit.
 				newAudit, err := audit.Groups()
 				if err != nil {
 					botEnv.Log.Error(err)
 				}
+				botEnv.AuditLock.Lock()
 				botEnv.Audit = newAudit
-				botEnv.Log.Info("Audit updated.")
 				botEnv.AuditLock.Unlock()
+				botEnv.Log.Info("Audit updated.")
+				// Open a new index.
+				mapping := bleve.NewIndexMapping()
+				index, err := bleve.NewMemOnly(mapping)
+				defer index.Close()
+				if err != nil {
+					botEnv.Log.Error(err)
+					continue
+				}
+				batch := index.NewBatch()
+				botEnv.AuditLock.RLock()
+				for _, server := range botEnv.Audit.Servers {
+					for _, group := range server.Groups {
+						batch.Index(group.Id, SearchableGroup{
+							Server: server.Name,
+							Group: group,
+						})
+					}
+				}
+				botEnv.AuditLock.RUnlock()
+				if err := index.Batch(batch); err != nil {
+					botEnv.Log.Error(err)
+					continue
+				}
+				// Run queries on current groups.
+				errReIt := repo.View(func(txn *badger.Txn) error {
+  				it := txn.NewIterator(badger.DefaultIteratorOptions)
+					defer it.Close()
+					prefix := []byte("query")
+					for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+						item := it.Item()
+						k := item.Key()
+						err := item.Value(func(v []byte) error {
+							// If query Server field does not match any servers, alert User
+							// and mark for deletion.
+							query := bleve.NewQueryStringQuery(string(v))
+							search := bleve.NewSearchRequest(query)
+							searchResults, err := index.Search(search)
+							if err != nil {
+								botEnv.Log.Error(err)
+								continue
+							}
+							for _, match := range searchResults.Hits {
+								doc, err := index.Document(match.ID)
+								if err != nil {
+									botEnv.Log.Error(err)
+									continue
+								}
+								// Assuming the low frequency in new matches, and the low
+								// frequency in which the Groups command is invoked, tying up
+								// the Audit structure should pose no hinderance.
+								// TODO: Investigate this.
+							}
+						})
+						if err != nil {
+							return err
+						}
+					}
+  				return nil
+				})
+				if errReIt != nil {
+					botEnv.Log.Error(errReIt)
+				}
+			case <- incoming:
+				// TODO: Check that Server matches an existing server.
+				continue
+			case <- delete:
+				continue
 			case <- quit:
 				auditTicker.Stop()
 				return

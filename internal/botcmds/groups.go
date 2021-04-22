@@ -9,6 +9,9 @@ import (
   "github.com/bwmarrin/discordgo"
 )
 
+// [prefix]groups [server]
+// Retrieves the server entry in audit for the specified server, if the entry
+// exists. Formats entry and then sends it to the requesting user.
 func Groups(session *discordgo.Session, message *discordgo.MessageCreate, env *botenv.BotEnv)  {
   strTokens := strings.Fields(message.Content[len(env.Config.Prefix):])
   if len(strTokens) <= 1 {

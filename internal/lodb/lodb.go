@@ -1,198 +1,204 @@
 package lodb
 
 import(
-  "database/sql"
-  _ "github.com/mattn/go-sqlite3"
-  "hash/adler32"
-  "log"
+  // "hash/adler32"
+  "errors"
+  "fmt"
+  // "log"
   "strconv"
   "strings"
   "time"
+
+  badger "github.com/dgraph-io/badger/v3"
+)
+
+var (
+  ErrOrphanPair = errors.New("Key-value entry has no corresponding query or return entry.")
+  ErrUserIndicesFull = errors.New("No open index found for user.")
+  ErrMalformedKey = errors.New("The key appears malformed and cannot be processed.")
+  ErrCorruptQuery = errors.New("A part of the query is corrupted.")
+)
+
+const (
+  // The minimum value a query's user-unique id can be.
+  IDMIN byte = '0'
+  // The maximum value a query's user-uniqe id can be.
+  IDMAX byte = '9'
+  // The maximum life-time of a query.
+  TTLMAX time.Duration = time.Hour * 24
 )
 
 type LoQuery struct {
   AuthorID string
-  Classes []string
   ChannelID string
-  Duration int
-  ID uint32 // ID is created by hashing other fields of the LoQuery
-  Level int
-  Onetime bool
-  Timestamp time.Time
-  Query string
+  ID byte // ID is a unique-per-user integer, 0-9.
+  TTL time.Duration
+  Query string // String formatted for string query in Bleve
 }
 
-type LoQueryRepository interface {
-  Close() error
-  Delete(id int) error
-  FindByID(id int) (*LoQuery, error)
-  FindByAuthorID(authorid string) ([]LoQuery, error)
-  Save(query *LoQuery) error
-}
 
 type LoRepo struct {
-  db *sql.DB
-  deleteStmt *sql.Stmt
-  findByIDStmt *sql.Stmt
-  findByAuthorStmt *sql.Stmt
-  saveStmt *sql.Stmt
+  db *badger.DB
 }
 
-func NewLoRepo(db *sql.DB) *LoRepo {
-  deleteStmt, err := db.Prepare(`DELETE FROM lo_queries WHERE id = ?`)
+func NewLoRepo(path string) (*LoRepo, error) {
+  db, err := badger.Open(badger.DefaultOptions(path))
   if err != nil {
-    log.Fatal(err)
+    return &LoRepo{db: db}, err
   }
-  findByIDStmt, err := db.Prepare(`SELECT * FROM lo_queries WHERE id = ?`)
-  if err != nil {
-    log.Fatal(err)
-  }
-  findByAuthorStmt, err := db.Prepare(`SELECT * FROM lo_queries WHERE author = ?`)
-  if err != nil {
-    log.Fatal(err)
-  }
-  saveStmt, err := db.Prepare(`INSERT INTO
-    lo_queries (author, classes, channel, duration, level, timestamp, query)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`)
-  if err != nil {
-    log.Fatal(err)
-  }
-
-  return &LoRepo{
-    db: db,
-    deleteStmt: deleteStmt,
-    findByIDStmt: findByIDStmt,
-    findByAuthorStmt: findByAuthorStmt,
-    saveStmt: saveStmt,
-  }
+  return &LoRepo{db: db}, nil
 }
 
 // Close
 func (r *LoRepo) Close() {
-  // The DB close is handled in main, so only the
-  // prepared statements need to be closed.
-  defer r.deleteStmt.Close()
-  defer r.findByIDStmt.Close()
-  defer r.findByAuthorStmt.Close()
-  defer r.saveStmt.Close()
-  return
+  r.db.Close()
 }
 
 // Delete
-func (r *LoRepo) Delete(id int) error {
-  _, err := r.deleteStmt.Exec(id)
-  return err
+func (r *LoRepo) Delete(authorID string, index byte) error {
+  // TODO: Should try doing this as a WriteBatch, instead.
+  err := r.db.Update(func(txn *badger.Txn) error {
+    qKey := fmt.Sprintf("query-%s-%d", authorID, string(index))
+    rKey := fmt.Sprintf("return-%s-%d", authorID, string(index))
+
+    err1 := txn.Delete([]byte(qKey))
+    if err1 != nil {
+      return err1
+    }
+    err2 := txn.Delete([]byte(rKey))
+    if err2 != nil {
+      return err2
+    }
+    return nil
+  })
+  if err != nil {
+    return err
+  }
+  return nil
 }
 
-// FindByID
-func (r *LoRepo) FindByID(id int) (*LoQuery, error) {
-  var q LoQuery
-  err := r.findByIDStmt.QueryRow(id).Scan(
-    &q.AuthorID,
-    &q.Classes,
-    &q.ChannelID,
-    &q.Duration,
-    &q.ID,
-    &q.Level,
-    &q.Onetime,
-    &q.Timestamp,
-    &q.Query)
-  return &q, err
-}
+// // FindByID
+// func (r *LoRepo) FindByID(id int) (*LoQuery, error) {
+//   var q LoQuery
+//   err := r.findByIDStmt.QueryRow(id).Scan(
+//     &q.AuthorID,
+//     &q.Classes,
+//     &q.ChannelID,
+//     &q.Duration,
+//     &q.ID,
+//     &q.Level,
+//     &q.Onetime,
+//     &q.Timestamp,
+//     &q.Query)
+//   return &q, err
+// }
 
 // FindByAuthorID
 func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
   var queries []LoQuery
 
-  rows, err := r.findByAuthorStmt.Query(authorid)
+  err := r.db.View(func(txn *badger.Txn) error {
+    it := txn.NewIterator(badger.DefaultIteratorOptions)
+    defer it.Close()
+    prefix := []byte(fmt.Sprintf("query-%s", authorid))
+    for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+      qItem := it.Item()
+      var keyCopy, valCopy []byte
+      keyStr := string(qItem.Key())
+      keyCopy = append([]byte{}, keyStr...)
+      err := qItem.Value(func(v []byte) error {
+        valCopy = append([]byte{}, v...)
+        return nil
+      })
+      if err != nil {
+        return err
+      }
+      if len(keyStr) <= len("query-") + len("-0") {
+          return ErrMalformedKey
+      }
+      // Parse out the AuthorID.
+      auth := keyStr[len("query-"):len(keyStr)-len("-0")]
+
+      var id byte = keyCopy[len(keyCopy)-1]
+      if id < IDMIN || id > IDMAX {
+        return ErrMalformedKey
+      }
+      // Retrieve the current TTL.
+      expTime := time.Unix(int64(qItem.ExpiresAt()), 0)
+      ttl := expTime.Sub(time.Now())
+      // TODO: check for valid ttl (not max or min, is less than 24 hours, ect.)
+      if ttl > TTLMAX {
+        return ErrCorruptQuery
+      }
+
+      loQ := LoQuery{
+        AuthorID: auth,
+        ChannelID: "",
+        ID: id,
+        TTL: ttl,
+        Query: string(valCopy),
+      }
+      queries = append(queries, loQ)
+    }
+    return nil
+  })
   if err != nil {
     return queries, err
   }
-  defer rows.Close()
+  return queries, nil
+}
 
-  for rows.Next() {
-    var id int
-    var q LoQuery
-    err := rows.Scan(
-      &id,
-      &q.AuthorID,
-      &q.Classes,
-      &q.ChannelID,
-      &q.Duration,
-      &q.ID,
-      &q.Level,
-      &q.Onetime,
-      &q.Timestamp,
-      &q.Query)
-    if err != nil {
-      log.Fatal(err)
+// Save // TODO: Change to return ID?
+func (r *LoRepo) Save(q LoQuery) error {
+  // Find lowest unused index.
+  err := r.db.Update(func(txn *badger.Txn) error {
+    itOpts := badger.DefaultIteratorOptions
+    itOpts.PrefetchValues = false
+    it := txn.NewIterator(itOpts)
+    defer it.Close()
+    prefix := []byte("query-"+q.AuthorID)
+    unusedIndex := int64(0)
+    for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+      item := it.Item()
+      k := item.Key()
+      curr, err := strconv.ParseInt(string(k[len(k)-1]), 10, 16)
+      if err != nil {
+        return ErrMalformedKey
+      }
+      if unusedIndex < curr {
+        break
+      } else {
+        unusedIndex = curr + 1
+      }
     }
+    if unusedIndex > 9 {
+      return ErrUserIndicesFull
+    }
+    // Set unused index to new query.
+    // query-[AuthorID]-[0-9]:[Query]
+    qKey := fmt.Sprintf("query-%s-%d", q.AuthorID, string(unusedIndex))
+    e1 := badger.NewEntry([]byte(qKey), []byte(q.Query)).WithTTL(q.TTL)
+    _ = txn.SetEntry(e1)
+    // return-[AuthorID]-[0-9]:[ChannelID]
+    rKey := fmt.Sprintf("return-%s-%d", q.AuthorID, string(unusedIndex))
+    e2 := badger.NewEntry([]byte(rKey), []byte(q.ChannelID)).WithTTL(q.TTL)
+    _ = txn.SetEntry(e2)
 
-    queries = append(queries, q)
+    return nil
+  })
+  if err != nil {
+    return err
   }
-  if err := rows.Err(); err != nil {
-    return queries, err
-  } else {
-    return queries, nil
-  }
-}
-
-// Save
-func (r *LoRepo) Save(q *LoQuery) error {
-  // TODO: Handle small chance that there is a hashing conflict
-  _, err := r.saveStmt.Exec(
-    q.AuthorID,
-    ArrToStr(q.Classes),
-    q.ChannelID,
-    q.Duration,
-    q.Hash(),
-    q.Level,
-    q.Onetime,
-    q.Timestamp,
-    q.Query)
-  return err
-}
-
-func ArrToStr(arr []string) string {
-  return strings.Join(arr, ", ")
-}
-
-func StrToArr(str string) []string {
-  return strings.Split(str, ", ")
+  return nil
 }
 
 func (q LoQuery) String() string {
   qStrings := []string{}
   qStrings = append(qStrings, "ID: " + strconv.FormatInt(int64(q.ID), 10))
-  if q.Query != "" {
-    qStrings = append(qStrings, "Query: \"" + q.Query + "\"")
-  } else {
-    qStrings = append(qStrings, "Query: None")
-  }
 
-  if len(q.Classes) > 0 {
-    qStrings = append(qStrings, "Classes: " + ArrToStr(q.Classes))
-  } else {
-    qStrings = append(qStrings, "Classes: None")
-  }
+  qStrings = append(qStrings, "Query: \"" + q.Query + "\"")
 
-  qStrings = append(qStrings, "Timestamp: " + q.Timestamp.Format("Mon Jan _2 15:04:05"))
-  qStrings = append(qStrings, "Duration: " + strconv.FormatInt(int64(q.Duration), 10) + "hours")
-
-  if q.Level > 0 {
-    qStrings = append(qStrings, "Level: " + strconv.FormatInt(int64(q.Level), 10))
-  } else {
-    qStrings = append(qStrings, "Level: None")
-  }
-
-  qStrings = append(qStrings, "One-time: " + strconv.FormatBool(q.Onetime))
+  qStrings = append(qStrings, "Duration: " + strconv.FormatInt(int64(q.TTL), 10) + "hours")
 
   return strings.Join(qStrings, ", ")
-}
-
-func (q *LoQuery) Hash() uint32 {
-  b := []byte{}
-  b = append(b, []byte(q.Query)...)
-
-  return adler32.Checksum(b)
 }
