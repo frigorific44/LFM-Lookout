@@ -16,7 +16,7 @@ type SearchableGroup struct {
 
 type DeleteRequest struct {
   AuthorID string
-  Index byte
+  Index rune
 }
 
 type BotEnv struct {

@@ -6,6 +6,7 @@ import(
   "strconv"
   "strings"
   "time"
+  "unicode/utf8"
 
   badger "github.com/dgraph-io/badger/v3"
 )
@@ -19,9 +20,9 @@ var (
 
 const (
   // The minimum value a query's user-unique id can be.
-  IDMIN byte = '0'
+  IDMIN rune = '0'
   // The maximum value a query's user-uniqe id can be.
-  IDMAX byte = '9'
+  IDMAX rune = '9'
   // The maximum life-time of a query.
   TTLMAX time.Duration = time.Hour * 24
 )
@@ -29,7 +30,7 @@ const (
 type LoQuery struct {
   AuthorID string
   ChannelID string
-  ID byte // ID is a unique-per-user integer, 0-9.
+  ID rune // ID is a unique-per-user integer, 0-9.
   TTL time.Duration
   Query string // String formatted for string query in Bleve
 }
@@ -53,11 +54,11 @@ func (r *LoRepo) Close() {
 }
 
 // Delete
-func (r *LoRepo) Delete(authorID string, index byte) error {
+func (r *LoRepo) Delete(authorID string, index rune) error {
   // TODO: Should try doing this as a WriteBatch, instead.
   err := r.db.Update(func(txn *badger.Txn) error {
-    qKey := fmt.Sprintf("query-%s-%d", authorID, string(index))
-    rKey := fmt.Sprintf("return-%s-%d", authorID, string(index))
+    qKey := fmt.Sprintf("query-%s-%s", authorID, string(index))
+    rKey := fmt.Sprintf("return-%s-%s", authorID, string(index))
 
     err1 := txn.Delete([]byte(qKey))
     if err1 != nil {
@@ -101,9 +102,8 @@ func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
     prefix := []byte(fmt.Sprintf("query-%s", authorid))
     for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
       qItem := it.Item()
-      var keyCopy, valCopy []byte
+      var valCopy []byte
       keyStr := string(qItem.Key())
-      keyCopy = append([]byte{}, keyStr...)
       err := qItem.Value(func(v []byte) error {
         valCopy = append([]byte{}, v...)
         return nil
@@ -111,14 +111,13 @@ func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
       if err != nil {
         return err
       }
-      fmt.Println(keyStr)
       if len(keyStr) <= len("query-") + len("-0") {
           return ErrMalformedKey
       }
       // Parse out the AuthorID.
       auth := keyStr[len("query-"):len(keyStr)-len("-0")]
 
-      var id byte = keyCopy[len(keyCopy)-1]
+      id, _ := utf8.DecodeLastRuneInString(keyStr)
       if id < IDMIN || id > IDMAX {
         return ErrMalformedKey
       }
@@ -156,30 +155,27 @@ func (r *LoRepo) Save(q LoQuery) error {
     it := txn.NewIterator(itOpts)
     defer it.Close()
     prefix := []byte("query-"+q.AuthorID)
-    unusedIndex := int64(0)
+    unusedIndex := IDMIN
     for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
       item := it.Item()
       k := item.Key()
-      curr, err := strconv.ParseInt(string(k[len(k)-1]), 10, 16)
-      if err != nil {
-        return ErrMalformedKey
-      }
+      curr, _ := utf8.DecodeLastRuneInString(string(k))
       if unusedIndex < curr {
         break
       } else {
         unusedIndex = curr + 1
       }
     }
-    if unusedIndex > 9 {
+    if unusedIndex > IDMAX {
       return ErrUserIndicesFull
     }
     // Set unused index to new query.
     // query-[AuthorID]-[0-9]:[Query]
-    qKey := fmt.Sprintf("query-%s-%d", q.AuthorID, string(unusedIndex))
+    qKey := fmt.Sprintf("query-%s-%s", q.AuthorID, string(unusedIndex))
     e1 := badger.NewEntry([]byte(qKey), []byte(q.Query)).WithTTL(q.TTL)
     _ = txn.SetEntry(e1)
     // return-[AuthorID]-[0-9]:[ChannelID]
-    rKey := fmt.Sprintf("return-%s-%d", q.AuthorID, string(unusedIndex))
+    rKey := fmt.Sprintf("return-%s-%s", q.AuthorID, string(unusedIndex))
     e2 := badger.NewEntry([]byte(rKey), []byte(q.ChannelID)).WithTTL(q.TTL)
     _ = txn.SetEntry(e2)
 

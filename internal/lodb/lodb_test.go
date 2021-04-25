@@ -113,7 +113,7 @@ func TestLoDB_IndexRecycling(t *testing.T) {
     t.Errorf("Returned slice is of size %d, not 0. Query has not expired.", len(findThree))
   }
   // Delete third query.
-  if err := lorepo.Delete(byte('0')); err != nil {
+  if err := lorepo.Delete(rune('0')); err != nil {
     t.Error("Error occured while deleting first query from repo.")
   }
   // Retrieve queries, ensure two remain and three is no longer accessible.

@@ -192,7 +192,6 @@ func main() {
 				sMatch := re.FindStringSubmatch(q.Query)
 				if (sMatch == nil) {continue}
 				s := sMatch[1]
-				fmt.Println(s)
 				_, exists := botEnv.Audit[s]
 				if !exists {
 					bot.ChannelMessageSend(q.ChannelID, "The requested query does not seem to specify a server which actually exists.")
