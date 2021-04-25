@@ -3,7 +3,6 @@ package lodb
 import(
   "errors"
   "fmt"
-  "strconv"
   "strings"
   "time"
   "unicode/utf8"
@@ -193,7 +192,7 @@ func (r *LoRepo) GetView(fn func(txn *badger.Txn) error) error {
 
 func (q LoQuery) String() string {
   qStrings := []string{}
-  qStrings = append(qStrings, "ID: " + strconv.FormatInt(int64(q.ID), 10))
+  qStrings = append(qStrings, "ID: " + string(q.ID))
 
   qStrings = append(qStrings, "Query: \"" + q.Query + "\"")
 
