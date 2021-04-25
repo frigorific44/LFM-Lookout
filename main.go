@@ -11,22 +11,19 @@ import (
 	"io/ioutil"
 	"os"
 	"os/signal"
+	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
-	"reflect"
 
+	badger "github.com/dgraph-io/badger/v3"
 	"github.com/blevesearch/bleve"
 	dg "github.com/bwmarrin/discordgo"
 	"github.com/sirupsen/logrus"
 )
 
-
-type SearchableGroup struct {
-	Server string
-	Group audit.Group
-}
 
 func main() {
 	// Open file for logging.
@@ -63,8 +60,9 @@ func main() {
 	currAudit, err := audit.Groups()
 	if err != nil {
 		log.Fatal(err)
+	} else {
+		botEnv.Audit = AuditToMap(currAudit)
 	}
-	botEnv.Audit = currAudit
 	// Create a new Discord session using the provided bot token.
 	bot, err := dg.New("Bot " + botEnv.Config.Token)
 	if err != nil {
@@ -85,6 +83,9 @@ func main() {
 	// Periodically update botEnv.Audit.
 	auditTicker := time.NewTicker(time.Second * 31)
 	quit := make(chan bool)
+	incoming := make(chan lodb.LoQuery, 25)
+	delete := make(chan botenv.DeleteRequest, 25)
+	botEnv.LoChan, botEnv.DelChan = incoming, delete
 	go func() {
 		for {
 			select {
@@ -94,11 +95,12 @@ func main() {
 				newAudit, err := audit.Groups()
 				if err != nil {
 					botEnv.Log.Error(err)
+				} else{
+					botEnv.AuditLock.Lock()
+					botEnv.Audit = AuditToMap(newAudit)
+					botEnv.AuditLock.Unlock()
+					botEnv.Log.Info("Audit updated.")
 				}
-				botEnv.AuditLock.Lock()
-				botEnv.Audit = newAudit
-				botEnv.AuditLock.Unlock()
-				botEnv.Log.Info("Audit updated.")
 				// Open a new index.
 				mapping := bleve.NewIndexMapping()
 				index, err := bleve.NewMemOnly(mapping)
@@ -109,12 +111,9 @@ func main() {
 				}
 				batch := index.NewBatch()
 				botEnv.AuditLock.RLock()
-				for _, server := range botEnv.Audit.Servers {
-					for _, group := range server.Groups {
-						batch.Index(group.Id, SearchableGroup{
-							Server: server.Name,
-							Group: group,
-						})
+				for _, serverMap := range botEnv.Audit {
+					for idStr, sGroup := range serverMap {
+						batch.Index(idStr, sGroup)
 					}
 				}
 				botEnv.AuditLock.RUnlock()
@@ -123,7 +122,7 @@ func main() {
 					continue
 				}
 				// Run queries on current groups.
-				errReIt := repo.View(func(txn *badger.Txn) error {
+				errReIt := repo.GetView(func(txn *badger.Txn) error {
   				it := txn.NewIterator(badger.DefaultIteratorOptions)
 					defer it.Close()
 					prefix := []byte("query")
@@ -138,19 +137,44 @@ func main() {
 							searchResults, err := index.Search(search)
 							if err != nil {
 								botEnv.Log.Error(err)
-								continue
+								return err
 							}
+							botEnv.AuditLock.RLock()
+							defer botEnv.AuditLock.RUnlock()
+							// Review each match and act accordingly.
 							for _, match := range searchResults.Hits {
-								doc, err := index.Document(match.ID)
-								if err != nil {
-									botEnv.Log.Error(err)
-									continue
+								// TODO: Check that matched group hasn't already matched to this query.
+								found := false
+								// Iterate through servers to find the corresponding group.
+								for _, server := range botEnv.Audit {
+									sGroup, exists := server[match.ID]
+									if (exists) {
+										found = true
+										chanKey := strings.Replace(string(k), "query", "return", 1)
+										chanItem, err := txn.Get([]byte(chanKey))
+										if (err != nil) {
+											botEnv.Log.Error(err)
+											break
+										}
+									  var channel []byte
+									  errVal := chanItem.Value(func(val []byte) error {
+									    channel = append([]byte{}, val...)
+									    return nil
+									  })
+										if errVal != nil {
+											botEnv.Log.Error(errVal)
+											break
+										}
+										m := fmt.Sprintf("You got a hit!\n```ini\n%s```", sGroup.Group.String())
+										bot.ChannelMessageSend(string(channel), m)
+										break
+									}
 								}
-								// Assuming the low frequency in new matches, and the low
-								// frequency in which the Groups command is invoked, tying up
-								// the Audit structure should pose no hinderance.
-								// TODO: Investigate this.
+								if !found {
+									botEnv.Log.Error("Group match was not found in Audit map.")
+								}
 							}
+							return nil
 						})
 						if err != nil {
 							return err
@@ -161,10 +185,33 @@ func main() {
 				if errReIt != nil {
 					botEnv.Log.Error(errReIt)
 				}
-			case <- incoming:
-				// TODO: Check that Server matches an existing server.
+			case q := <- incoming:
+				// Check that Server matches an existing server.
+				re := regexp.MustCompile(`Server:\s*(\w+)`)
+				sMatch := re.FindStringSubmatch(q.Query)
+				if (sMatch == nil) {continue}
+				s := sMatch[1]
+				fmt.Println(s)
+				_, exists := botEnv.Audit[s]
+				if !exists {
+					bot.ChannelMessageSend(q.ChannelID, "The requested query does not seem to specify a server which actually exists.")
+					continue
+				}
+				// Save query to the repository.
+				err := repo.Save(q)
+				if err != nil {
+					botEnv.Log.Error(err)
+					bot.ChannelMessageSend(q.ChannelID, "Oh dear, it seems like there was a problem.")
+				} else {
+					botEnv.Log.Info("New query.")
+					bot.ChannelMessageSend(q.ChannelID, "Lookout query saved.")
+				}
 				continue
-			case <- delete:
+			case delReq := <- delete:
+				err := repo.Delete(delReq.AuthorID, delReq.Index)
+				if err != nil {
+					botEnv.Log.Error(err)
+				}
 				continue
 			case <- quit:
 				auditTicker.Stop()
@@ -219,4 +266,18 @@ func (env *LookoutEnv) messageCreate(s *dg.Session, m *dg.MessageCreate) {
 			}
 		}
 	}
+}
+
+func AuditToMap(audit *audit.Audit) map[string]map[string]botenv.SearchableGroup {
+	var newMap = make(map[string]map[string]botenv.SearchableGroup)
+	for _, server := range audit.Servers {
+		newMap[server.Name] = make(map[string]botenv.SearchableGroup)
+		for _, group := range server.Groups {
+			newMap[server.Name][fmt.Sprintf("%d", group.Id)] = botenv.SearchableGroup{
+				Server: server.Name,
+				Group: group,
+			}
+		}
+	}
+	return newMap
 }

@@ -9,12 +9,25 @@ import (
   logrus "github.com/sirupsen/logrus"
 )
 
+type SearchableGroup struct {
+	Server string
+	Group audit.Group
+}
+
+type DeleteRequest struct {
+  AuthorID string
+  Index byte
+}
+
 type BotEnv struct {
   Config *Configuration
   Log *logrus.Logger
   Repo *lodb.LoRepo
-  Audit *audit.Audit
+  // map[audit.Server.Name]map["audit.Group.Id"]audit.Group
+  Audit map[string]map[string]SearchableGroup
   AuditLock *sync.RWMutex
+  LoChan chan lodb.LoQuery
+  DelChan chan DeleteRequest
 }
 
 type Configuration struct {

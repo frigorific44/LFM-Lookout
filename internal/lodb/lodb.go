@@ -192,6 +192,10 @@ func (r *LoRepo) Save(q LoQuery) error {
   return nil
 }
 
+func (r *LoRepo) GetView(fn func(txn *badger.Txn) error) error {
+  return r.db.View(fn)
+}
+
 func (q LoQuery) String() string {
   qStrings := []string{}
   qStrings = append(qStrings, "ID: " + strconv.FormatInt(int64(q.ID), 10))

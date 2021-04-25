@@ -65,13 +65,7 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
     TTL: dur,
     Query: s,
   }
-  errRepo := env.Repo.Save(q)
-  if errRepo!= nil {
-    env.Log.Error(errRepo)
-    session.ChannelMessageSend(message.ChannelID, "Oh dear, it seems like there was a problem.")
-  }
-  env.Log.Info("New query.")
-  session.ChannelMessageSend(message.ChannelID, "Lookout query saved.")
+  env.LoChan <- q
 }
 
 // Translates our slightly more friendly format into a valid Bleve string query.
