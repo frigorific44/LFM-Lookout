@@ -1,10 +1,8 @@
 package lodb
 
 import(
-  // "hash/adler32"
   "errors"
   "fmt"
-  // "log"
   "strconv"
   "strings"
   "time"
@@ -113,6 +111,7 @@ func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
       if err != nil {
         return err
       }
+      fmt.Println(keyStr)
       if len(keyStr) <= len("query-") + len("-0") {
           return ErrMalformedKey
       }
@@ -202,7 +201,7 @@ func (q LoQuery) String() string {
 
   qStrings = append(qStrings, "Query: \"" + q.Query + "\"")
 
-  qStrings = append(qStrings, "Duration: " + strconv.FormatInt(int64(q.TTL), 10) + "hours")
+  qStrings = append(qStrings, "Duration: " + q.TTL.String())
 
   return strings.Join(qStrings, ", ")
 }

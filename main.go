@@ -55,6 +55,7 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
+	botEnv.Repo = repo
 	// TODO: Clean up orphan query and return entries.
 	// Get current groups from playeraudit.com
 	currAudit, err := audit.Groups()
