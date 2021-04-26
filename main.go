@@ -85,8 +85,7 @@ func main() {
 	auditTicker := time.NewTicker(time.Second * 31)
 	quit := make(chan bool)
 	incoming := make(chan lodb.LoQuery, 25)
-	delete := make(chan botenv.DeleteRequest, 25)
-	botEnv.LoChan, botEnv.DelChan = incoming, delete
+	botEnv.LoChan = incoming
 	go func() {
 		for {
 			select {
@@ -205,12 +204,6 @@ func main() {
 				} else {
 					botEnv.Log.Info("New query.")
 					bot.ChannelMessageSend(q.ChannelID, "Lookout query saved.")
-				}
-				continue
-			case delReq := <- delete:
-				err := repo.Delete(delReq.AuthorID, delReq.Index)
-				if err != nil {
-					botEnv.Log.Error(err)
 				}
 				continue
 			case <- quit:

@@ -14,11 +14,6 @@ type SearchableGroup struct {
 	Group audit.Group
 }
 
-type DeleteRequest struct {
-  AuthorID string
-  Index rune
-}
-
 type BotEnv struct {
   Config *Configuration
   Log *logrus.Logger
@@ -27,7 +22,6 @@ type BotEnv struct {
   Audit map[string]map[string]SearchableGroup
   AuditLock *sync.RWMutex
   LoChan chan lodb.LoQuery
-  DelChan chan DeleteRequest
 }
 
 type Configuration struct {

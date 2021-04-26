@@ -19,9 +19,15 @@ func Cancel(session *discordgo.Session, message *discordgo.MessageCreate, env *b
   r, _ := utf8.DecodeLastRuneInString(strings.TrimSpace(message.Content))
   // Check the rune.
   if (r < lodb.IDMIN || r > lodb.IDMAX) {
-    session.ChannelMessageSend(message.ChannelID, fmt.Sprintf("The ID is not within an acceptable range."))
+    session.ChannelMessageSend(message.ChannelID, fmt.Sprintf("The ID %s is not within an acceptable range.", string(r)))
     return
   }
-  // Send the delete request.
-  env.DelChan <- botenv.DeleteRequest{AuthorID:message.Author.ID,Index:r,}
+  // Delete.
+  err := env.Repo.Delete(message.Author.ID, r)
+  if err != nil {
+    env.Log.Error(err)
+    session.ChannelMessageSend(message.ChannelID, "The was a problem trying to delete that query.")
+    return
+  }
+  session.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Query %s was canceled.", string(r)))
 }
