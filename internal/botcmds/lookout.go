@@ -34,6 +34,19 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
   if !strings.Contains(s, "Server:") {
     session.ChannelMessageSend(message.ChannelID, fmt.Sprintf(errMessage, "Missing a server field."))
   }
+  // Check that Server matches an existing server.
+  re := regexp.MustCompile(`Server:\s*(\w+)`)
+  sMatches := re.FindStringSubmatch(s)
+  if (sMatches != nil) {
+    sMatch := sMatches[1]
+    env.AuditLock.RLock()
+    _, exists := env.Audit[sMatch]
+    env.AuditLock.RUnlock()
+    if !exists {
+      session.ChannelMessageSend(message.ChannelID, "The requested query does not seem to specify an existing server.")
+      return
+    }
+  }
   // Verify and parse out the duration field.
   durRegex := regexp.MustCompile(`\s+Duration:\s*(\S+)`)
   matchSlice := durRegex.FindStringSubmatch(s)
@@ -65,7 +78,15 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
     TTL: dur,
     Query: s,
   }
-  env.LoChan <- q
+  // Save query to the repository.
+  errS := env.Repo.Save(q)
+  if errS != nil {
+    env.Log.Error(errS)
+    session.ChannelMessageSend(q.ChannelID, "Oh dear, it seems like there was a problem.")
+  } else {
+    env.Log.Info("New query.")
+    session.ChannelMessageSend(q.ChannelID, "Lookout query saved.")
+  }
 }
 
 // Translates our slightly more friendly format into a valid Bleve string query.

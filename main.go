@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -84,8 +83,6 @@ func main() {
 	// Periodically update botEnv.Audit.
 	auditTicker := time.NewTicker(time.Second * 31)
 	quit := make(chan bool)
-	incoming := make(chan lodb.LoQuery, 25)
-	botEnv.LoChan = incoming
 	go func() {
 		for {
 			select {
@@ -185,27 +182,6 @@ func main() {
 				if errReIt != nil {
 					botEnv.Log.Error(errReIt)
 				}
-			case q := <- incoming:
-				// Check that Server matches an existing server.
-				re := regexp.MustCompile(`Server:\s*(\w+)`)
-				sMatch := re.FindStringSubmatch(q.Query)
-				if (sMatch == nil) {continue}
-				s := sMatch[1]
-				_, exists := botEnv.Audit[s]
-				if !exists {
-					bot.ChannelMessageSend(q.ChannelID, "The requested query does not seem to specify a server which actually exists.")
-					continue
-				}
-				// Save query to the repository.
-				err := repo.Save(q)
-				if err != nil {
-					botEnv.Log.Error(err)
-					bot.ChannelMessageSend(q.ChannelID, "Oh dear, it seems like there was a problem.")
-				} else {
-					botEnv.Log.Info("New query.")
-					bot.ChannelMessageSend(q.ChannelID, "Lookout query saved.")
-				}
-				continue
 			case <- quit:
 				auditTicker.Stop()
 				return

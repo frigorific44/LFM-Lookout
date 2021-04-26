@@ -21,7 +21,6 @@ type BotEnv struct {
   // map[audit.Server.Name]map["audit.Group.Id"]audit.Group
   Audit map[string]map[string]SearchableGroup
   AuditLock *sync.RWMutex
-  LoChan chan lodb.LoQuery
 }
 
 type Configuration struct {
