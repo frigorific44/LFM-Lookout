@@ -12,6 +12,11 @@ import (
 type SearchableGroup struct {
 	Server string
 	Group audit.Group
+  Fresh bool
+}
+
+type AuditMap struct {
+  Map map[string]map[string]SearchableGroup
 }
 
 type BotEnv struct {
@@ -19,8 +24,10 @@ type BotEnv struct {
   Log *logrus.Logger
   Repo *lodb.LoRepo
   // map[audit.Server.Name]map["audit.Group.Id"]audit.Group
-  Audit map[string]map[string]SearchableGroup
+  Audit AuditMap
   AuditLock *sync.RWMutex
+  Tick rune
+  TickLock *sync.RWMutex
 }
 
 type Configuration struct {

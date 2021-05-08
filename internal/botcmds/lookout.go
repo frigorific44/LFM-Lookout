@@ -24,6 +24,8 @@ import (
 // the field name, a colon, and then the search term of phrase. Optional search
 // fields include Comment, Quest, Difficulty, and Patron.
 func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *botenv.BotEnv)  {
+  fmt.Println("Lookout command received.")
+  defer fmt.Println("Lookout command processed.")
   errMessage := "There was an error processing the query: %s"
   s, err := TranslateQuery(message.Content[len(env.Config.Prefix)+len("lookout"):])
   if err != nil {
@@ -40,7 +42,7 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
   if (sMatches != nil) {
     sMatch := sMatches[1]
     env.AuditLock.RLock()
-    _, exists := env.Audit[sMatch]
+    _, exists := env.Audit.Map[sMatch]
     env.AuditLock.RUnlock()
     if !exists {
       session.ChannelMessageSend(message.ChannelID, "The requested query does not seem to specify an existing server.")
@@ -79,7 +81,10 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
     Query: s,
   }
   // Save query to the repository.
-  errS := env.Repo.Save(q)
+  env.TickLock.RLock()
+  t := env.Tick
+  errS := env.Repo.Save(q, t)
+  env.TickLock.RUnlock()
   if errS != nil {
     env.Log.Error(errS)
     session.ChannelMessageSend(q.ChannelID, "Oh dear, it seems like there was a problem.")
@@ -87,6 +92,7 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
     env.Log.Info("New query.")
     session.ChannelMessageSend(q.ChannelID, "Lookout query saved.")
   }
+  env.Log.Trace("Lookout command processed.")
 }
 
 // Translates our slightly more friendly format into a valid Bleve string query.
@@ -96,7 +102,7 @@ func TranslateQuery(s string) (string, error) {
 }
 
 func ReplaceLevel(s string) (string, error) {
-  splits := regexp.MustCompile(`\s*level:`).Split(s, 3)
+  splits := regexp.MustCompile(`\s*Level:`).Split(s, 3)
   // Return the string if no level field found.
   if len(splits) < 2 {
     return s, nil
@@ -112,8 +118,8 @@ func ReplaceLevel(s string) (string, error) {
     if num < 1 {
       return s, errors.New("Non-positive integer parsed from level field.")
     }
-    after := strings.Join( fields[:], " ")
-    return fmt.Sprintf("%s maxlevel:>=%d minlevel:<=%d %s", splits[0], num, num, after), nil
+    after := strings.Join( fields[1:], " ")
+    return fmt.Sprintf("%s +MaxLevel:>=%d +MinLevel:<=%d %s", splits[0], num, num, after), nil
   // If unexpected splits are encountered, return error on multiple level fields.
   }
 }

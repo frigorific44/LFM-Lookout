@@ -19,11 +19,12 @@ var (
 
 const (
   // The minimum value a query's user-unique id can be.
-  IDMIN rune = '0'
+  IDMIN rune = 0
   // The maximum value a query's user-uniqe id can be.
-  IDMAX rune = '9'
+  IDMAX rune = 9
   // The maximum life-time of a query.
   TTLMAX time.Duration = time.Hour * 24
+  TICKPERIOD rune = 24 * 60 * 2
 )
 
 type LoQuery struct {
@@ -53,11 +54,10 @@ func (r *LoRepo) Close() {
 }
 
 // Delete
-func (r *LoRepo) Delete(authorID string, index rune) error {
-  // TODO: Should try doing this as a WriteBatch, instead.
+func (r *LoRepo) Delete(authorID string, id rune) error {
   err := r.db.Update(func(txn *badger.Txn) error {
-    qKey := fmt.Sprintf("query-%s-%s", authorID, string(index))
-    rKey := fmt.Sprintf("return-%s-%s", authorID, string(index))
+    qKey := fmt.Sprintf("query-%s-%s", authorID, string(id))
+    rKey := fmt.Sprintf("return-%s-%s", authorID, string(id))
 
     err1 := txn.Delete([]byte(qKey))
     if err1 != nil {
@@ -75,21 +75,6 @@ func (r *LoRepo) Delete(authorID string, index rune) error {
   return nil
 }
 
-// // FindByID
-// func (r *LoRepo) FindByID(id int) (*LoQuery, error) {
-//   var q LoQuery
-//   err := r.findByIDStmt.QueryRow(id).Scan(
-//     &q.AuthorID,
-//     &q.Classes,
-//     &q.ChannelID,
-//     &q.Duration,
-//     &q.ID,
-//     &q.Level,
-//     &q.Onetime,
-//     &q.Timestamp,
-//     &q.Query)
-//   return &q, err
-// }
 
 // FindByAuthorID
 func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
@@ -116,7 +101,8 @@ func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
       // Parse out the AuthorID.
       auth := keyStr[len("query-"):len(keyStr)-len("-0")]
 
-      id, _ := utf8.DecodeLastRuneInString(keyStr)
+      r, _ := utf8.DecodeLastRuneInString(keyStr)
+      id, _ := DecodeFinalRune(r)
       if id < IDMIN || id > IDMAX {
         return ErrMalformedKey
       }
@@ -131,7 +117,7 @@ func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
       loQ := LoQuery{
         AuthorID: auth,
         ChannelID: "",
-        ID: id,
+        ID: r,
         TTL: ttl,
         Query: string(valCopy),
       }
@@ -146,7 +132,7 @@ func (r *LoRepo) FindByAuthor(authorid string) ([]LoQuery, error) {
 }
 
 // Save // TODO: Change to return ID?
-func (r *LoRepo) Save(q LoQuery) error {
+func (r *LoRepo) Save(q LoQuery, tick rune) error {
   // Find lowest unused index.
   err := r.db.Update(func(txn *badger.Txn) error {
     itOpts := badger.DefaultIteratorOptions
@@ -158,7 +144,8 @@ func (r *LoRepo) Save(q LoQuery) error {
     for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
       item := it.Item()
       k := item.Key()
-      curr, _ := utf8.DecodeLastRuneInString(string(k))
+      r, _ := utf8.DecodeLastRuneInString(string(k))
+      curr, _ := DecodeFinalRune(r)
       if unusedIndex < curr {
         break
       } else {
@@ -169,12 +156,13 @@ func (r *LoRepo) Save(q LoQuery) error {
       return ErrUserIndicesFull
     }
     // Set unused index to new query.
-    // query-[AuthorID]-[0-9]:[Query]
-    qKey := fmt.Sprintf("query-%s-%s", q.AuthorID, string(unusedIndex))
+    // query-[AuthorID]-[君-贤][0-9]:[Query]
+    fr := EncodeFinalRune(unusedIndex, tick)
+    qKey := fmt.Sprintf(`query-%s-%s`, q.AuthorID, string(fr))
     e1 := badger.NewEntry([]byte(qKey), []byte(q.Query)).WithTTL(q.TTL)
     _ = txn.SetEntry(e1)
-    // return-[AuthorID]-[0-9]:[ChannelID]
-    rKey := fmt.Sprintf("return-%s-%s", q.AuthorID, string(unusedIndex))
+    // return-[AuthorID]-[君-贤][0-9]:[ChannelID]
+    rKey := fmt.Sprintf(`return-%s-%s`, q.AuthorID, string(fr))
     e2 := badger.NewEntry([]byte(rKey), []byte(q.ChannelID)).WithTTL(q.TTL)
     _ = txn.SetEntry(e2)
 
@@ -192,11 +180,29 @@ func (r *LoRepo) GetView(fn func(txn *badger.Txn) error) error {
 
 func (q LoQuery) String() string {
   qStrings := []string{}
-  qStrings = append(qStrings, "ID: " + string(q.ID))
-
+  qStrings = append(qStrings, "ID: " + fmt.Sprintf("%X", q.ID))
   qStrings = append(qStrings, "Query: \"" + q.Query + "\"")
 
   qStrings = append(qStrings, "Duration: " + q.TTL.String())
 
   return strings.Join(qStrings, ", ")
+}
+
+func EncodeFinalRune(id rune, tick rune) rune {
+  return (id * TICKPERIOD) + tick
+}
+
+func DecodeFinalRune(r rune) (rune, rune) {
+  id := r / TICKPERIOD
+  tick := r - (id * TICKPERIOD)
+  return id, tick
+}
+
+func NextTickRune(r rune) rune {
+  return (r + 1) % TICKPERIOD
+}
+
+func GetIDFromKey(k string) rune {
+  r, _ := utf8.DecodeLastRuneInString(k)
+  return r
 }

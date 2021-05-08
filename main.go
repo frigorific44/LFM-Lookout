@@ -41,7 +41,10 @@ func main() {
 	}
 	log.Info("Logging to file.")
 	auditLock := new(sync.RWMutex)
-	botEnv := botenv.BotEnv{Log: log, AuditLock: auditLock}
+	tickLock := new(sync.RWMutex)
+	n := time.Now()
+	tick := rune((n.Hour() * 120) + (n.Minute() * 2) + (n.Second() / 30))
+	botEnv := botenv.BotEnv{Log: log, AuditLock: auditLock, Tick: tick, TickLock: tickLock}
 	// Load the config.json file.
 	io, err := ioutil.ReadFile("config.json")
 	if err != nil {
@@ -89,16 +92,19 @@ func main() {
 			// Update audit, cull expired queries, then run queries on audit
 			case <- auditTicker.C:
 				// Update audit.
+				startTotal := time.Now()
 				newAudit, err := audit.Groups()
 				if err != nil {
 					botEnv.Log.Error(err)
 				} else{
 					botEnv.AuditLock.Lock()
-					botEnv.Audit = AuditToMap(newAudit)
+					prevAudit := botEnv.Audit
+					botEnv.Audit = AuditToUpdatedMap(newAudit, prevAudit)
 					botEnv.AuditLock.Unlock()
 					botEnv.Log.Info("Audit updated.")
 				}
 				// Open a new index.
+				startIndex := time.Now()
 				mapping := bleve.NewIndexMapping()
 				index, err := bleve.NewMemOnly(mapping)
 				defer index.Close()
@@ -108,7 +114,7 @@ func main() {
 				}
 				batch := index.NewBatch()
 				botEnv.AuditLock.RLock()
-				for _, serverMap := range botEnv.Audit {
+				for _, serverMap := range botEnv.Audit.Map {
 					for idStr, sGroup := range serverMap {
 						batch.Index(idStr, sGroup)
 					}
@@ -118,6 +124,11 @@ func main() {
 					botEnv.Log.Error(err)
 					continue
 				}
+				startSearch := time.Now()
+				botEnv.TickLock.Lock()
+				currTick := botEnv.Tick
+				botEnv.Tick = lodb.NextTickRune(currTick)
+				botEnv.TickLock.Unlock()
 				// Run queries on current groups.
 				errReIt := repo.GetView(func(txn *badger.Txn) error {
   				it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -126,11 +137,24 @@ func main() {
 					for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 						item := it.Item()
 						k := item.Key()
+						_, t := lodb.DecodeFinalRune(lodb.GetIDFromKey(string(k)))
+						// If the query is from the next tick, defer until then.
+						botEnv.TickLock.RLock()
+						if t == botEnv.Tick {continue}
+						botEnv.TickLock.RUnlock()
 						err := item.Value(func(v []byte) error {
-							// If query Server field does not match any servers, alert User
-							// and mark for deletion.
-							query := bleve.NewQueryStringQuery(string(v))
-							search := bleve.NewSearchRequest(query)
+							queryBase := bleve.NewQueryStringQuery(string(v))
+							// If query is from the preceding tick, run against all
+							// groups, otherwise, run against only fresh ones.
+							var search *bleve.SearchRequest
+							if t != currTick {
+								onlyFresh := bleve.NewBoolFieldQuery(true)
+								onlyFresh.SetField("Fresh")
+								query := bleve.NewConjunctionQuery(queryBase, onlyFresh)
+								search = bleve.NewSearchRequest(query)
+							} else {
+								search = bleve.NewSearchRequest(queryBase)
+							}
 							searchResults, err := index.Search(search)
 							if err != nil {
 								botEnv.Log.Error(err)
@@ -143,7 +167,7 @@ func main() {
 								// TODO: Check that matched group hasn't already matched to this query.
 								found := false
 								// Iterate through servers to find the corresponding group.
-								for _, server := range botEnv.Audit {
+								for _, server := range botEnv.Audit.Map {
 									sGroup, exists := server[match.ID]
 									if (exists) {
 										found = true
@@ -162,7 +186,8 @@ func main() {
 											botEnv.Log.Error(errVal)
 											break
 										}
-										m := fmt.Sprintf("You got a hit!\n```ini\n%s```", sGroup.Group.String())
+										r := lodb.GetIDFromKey(string(k))
+										m := fmt.Sprintf("**ID: ** %X\n```%s```", r, sGroup.Group.String())
 										bot.ChannelMessageSend(string(channel), m)
 										break
 									}
@@ -182,6 +207,13 @@ func main() {
 				if errReIt != nil {
 					botEnv.Log.Error(errReIt)
 				}
+				stop := time.Now()
+				botEnv.Log.WithFields(logrus.Fields{
+					"total_dur": stop.Sub(startTotal).String(),
+					"audit_dur": startIndex.Sub(startTotal).String(),
+					"index_dur": startSearch.Sub(startIndex).String(),
+					"search_dur": stop.Sub(startSearch).String(),
+				}).Info("Audit ticker loop.")
 			case <- quit:
 				auditTicker.Stop()
 				return
@@ -237,7 +269,7 @@ func (env *LookoutEnv) messageCreate(s *dg.Session, m *dg.MessageCreate) {
 	}
 }
 
-func AuditToMap(audit *audit.Audit) map[string]map[string]botenv.SearchableGroup {
+func AuditToMap(audit *audit.Audit) botenv.AuditMap {
 	var newMap = make(map[string]map[string]botenv.SearchableGroup)
 	for _, server := range audit.Servers {
 		newMap[server.Name] = make(map[string]botenv.SearchableGroup)
@@ -245,8 +277,32 @@ func AuditToMap(audit *audit.Audit) map[string]map[string]botenv.SearchableGroup
 			newMap[server.Name][fmt.Sprintf("%d", group.Id)] = botenv.SearchableGroup{
 				Server: server.Name,
 				Group: group,
+				Fresh: true,
 			}
 		}
 	}
-	return newMap
+	return botenv.AuditMap{Map: newMap,}
+}
+
+func AuditToUpdatedMap(audit *audit.Audit, prevMap botenv.AuditMap) botenv.AuditMap {
+	var newMap = make(map[string]map[string]botenv.SearchableGroup)
+	for _, server := range audit.Servers {
+		newMap[server.Name] = make(map[string]botenv.SearchableGroup)
+		for _, group := range server.Groups {
+			id := fmt.Sprintf("%d", group.Id)
+			var f bool
+			other, ok := prevMap.Map[server.Name][id]
+			if ok {
+				f = group.Changed(other.Group)
+			} else {
+				f = true
+			}
+			newMap[server.Name][id] = botenv.SearchableGroup{
+				Server: server.Name,
+				Group: group,
+				Fresh: f,
+			}
+		}
+	}
+	return botenv.AuditMap{Map: newMap,}
 }
