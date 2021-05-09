@@ -27,7 +27,7 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
   fmt.Println("Lookout command received.")
   defer fmt.Println("Lookout command processed.")
   errMessage := "There was an error processing the query: %s"
-  s, err := TranslateQuery(message.Content[len(env.Config.Prefix)+len("lookout"):])
+  s, err := translateQuery(message.Content[len(env.Config.Prefix)+len("lookout"):])
   if err != nil {
     session.ChannelMessageSend(message.ChannelID, fmt.Sprintf(errMessage, err.Error()))
     return
@@ -96,12 +96,12 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
 }
 
 // Translates our slightly more friendly format into a valid Bleve string query.
-func TranslateQuery(s string) (string, error) {
-  return ReplaceLevel(s)
+func translateQuery(s string) (string, error) {
+  return replaceLevel(s)
   // TODO: Make sure Server field has Title-case.
 }
 
-func ReplaceLevel(s string) (string, error) {
+func replaceLevel(s string) (string, error) {
   splits := regexp.MustCompile(`\s*Level:`).Split(s, 3)
   // Return the string if no level field found.
   if len(splits) < 2 {

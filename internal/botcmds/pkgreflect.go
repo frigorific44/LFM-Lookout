@@ -9,5 +9,6 @@ var Functions = map[string]reflect.Value{
 	"Cancel": reflect.ValueOf(Cancel),
 	"Groups": reflect.ValueOf(Groups),
 	"Lookout": reflect.ValueOf(Lookout),
+	"Servers": reflect.ValueOf(Servers),
 }
 
