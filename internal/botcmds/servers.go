@@ -9,7 +9,7 @@ import (
   "github.com/bwmarrin/discordgo"
 )
 
-
+var ServersHelp string = "servers\nReturns the names of all currently active servers."
 // [prefix]servers
 // Retrieves all server names currently contained as keys in the audit map.
 func Servers(session *discordgo.Session, message *discordgo.MessageCreate, env *botenv.BotEnv)  {

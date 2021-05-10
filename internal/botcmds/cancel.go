@@ -11,6 +11,8 @@ import (
   "lfm_lookout/internal/botenv"
 )
 
+
+var CancelHelp string = "cancel [query id]\nCancels the specified query."
 // [prefix]cancel [query id]
 // Removes the specified Lookout query for the query database if it exists and
 // belongs to the user.

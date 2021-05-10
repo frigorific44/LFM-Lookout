@@ -11,7 +11,6 @@ import (
 	"io/ioutil"
 	"os"
 	"os/signal"
-	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -72,7 +71,8 @@ func main() {
 		log.Fatal(err)
 	}
 	// Embed BotEnv in LookoutEnv so BotEnv can be passed to commands.
-	loEnv := LookoutEnv{Env: &botEnv}
+	cmdsString := "active\ncancel\ngroups\nlookout\nservers"
+	loEnv := LookoutEnv{Env: &botEnv, CmdsString: cmdsString}
 	// Register the messageCreate func as a callback for MessageCreate events.
 	bot.AddHandler(loEnv.messageCreate)
 	// We only care about message events, so let's make that clear.
@@ -82,7 +82,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Debug(botcmds.Functions)
+	log.Debug(botcmds.Commands)
 	// Periodically update botEnv.Audit.
 	auditTicker := time.NewTicker(time.Second * 31)
 	quit := make(chan bool)
@@ -233,6 +233,7 @@ func main() {
 
 type LookoutEnv struct {
 	Env *botenv.BotEnv
+	CmdsString string
 }
 
 // This function will be called (due to AddHandler above) every time a new
@@ -254,16 +255,21 @@ func (env *LookoutEnv) messageCreate(s *dg.Session, m *dg.MessageCreate) {
 	if strings.HasPrefix(m.Content, env.Env.Config.Prefix) {
 		var strTokens = strings.Fields(m.Content[len(env.Env.Config.Prefix):])
 		if len(strTokens) > 0 {
-			var c = strings.Title(strings.ToLower(strTokens[0]))
-			// Reflection is used so commands need not be manually hard-coded.
-			// Instead, a precompiler is used to generate a map to command functions.
-			reflection, ok := botcmds.Functions[c]
+			var c = strings.ToLower(strTokens[0])
+			if c == "help" {
+				switch len(strTokens) {
+				case 1:
+					s.ChannelMessageSend(m.ChannelID, env.CmdsString)
+				case 2:
+					command, ok := botcmds.Commands[strings.ToLower(strTokens[1])]
+					if ok {s.ChannelMessageSend(m.ChannelID, command.HelpMsg)}
+				default:
+					return
+				}
+			}
+			command, ok := botcmds.Commands[c]
 			if ok {
-				in := make([]reflect.Value, 3)
-      	in[0] = reflect.ValueOf(s)
-				in[1] = reflect.ValueOf(m)
-				in[2] = reflect.ValueOf(env.Env)
-				reflection.Call(in)
+				command.Cmd(s, m, env.Env)
 			}
 		}
 	}

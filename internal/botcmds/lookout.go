@@ -14,6 +14,8 @@ import (
   "github.com/bwmarrin/discordgo"
 )
 
+
+var LookoutHelp string = `lookout Server:[string] Duration:[0h1m-24h0m] (level:[1-30]) (-/+)term (-/+)"a phrase"`
 // [prefix]lookout Server:[string] Duration:[0h1m-24h0m] (level:[1-30]) (-/+)term (-/+)"a phrase"
 // A lookout query requires specification of the server and the duration of the query.
 // Search terms and phrases will be searched across the whole of a group's

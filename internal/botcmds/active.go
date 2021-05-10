@@ -9,6 +9,8 @@ import (
   "github.com/bwmarrin/discordgo"
 )
 
+
+var ActiveHelp string = "active\n Returns your currently active queries."
 // [prefix]active
 // Retrieves the user's active Lookout queries from the query database and
 // returns the user the formatted listing in a message.

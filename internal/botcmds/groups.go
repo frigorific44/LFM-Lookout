@@ -9,6 +9,7 @@ import (
   "github.com/bwmarrin/discordgo"
 )
 
+var GroupsHelp string = "groups [server]"
 // [prefix]groups [server]
 // Retrieves the server entry in audit for the specified server, if the entry
 // exists. Formats entry and then sends it to the requesting user.
