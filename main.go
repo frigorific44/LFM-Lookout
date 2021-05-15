@@ -52,7 +52,7 @@ func main() {
 	// Load JSON into botenv:config.
 	json.Unmarshal(io, &botEnv.Config)
 	// Initialize LoRepo
-	repo, err := lodb.NewLoRepo("/tmp/badger")
+	repo, err := lodb.NewLoRepo("./badger")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -107,7 +107,6 @@ func main() {
 				startIndex := time.Now()
 				mapping := bleve.NewIndexMapping()
 				index, err := bleve.NewMemOnly(mapping)
-				defer index.Close()
 				if err != nil {
 					botEnv.Log.Error(err)
 					continue
@@ -132,7 +131,6 @@ func main() {
 				// Run queries on current groups.
 				errReIt := repo.GetView(func(txn *badger.Txn) error {
   				it := txn.NewIterator(badger.DefaultIteratorOptions)
-					defer it.Close()
 					prefix := []byte("query")
 					for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 						item := it.Item()
@@ -161,7 +159,6 @@ func main() {
 								return err
 							}
 							botEnv.AuditLock.RLock()
-							defer botEnv.AuditLock.RUnlock()
 							// Review each match and act accordingly.
 							for _, match := range searchResults.Hits {
 								// TODO: Check that matched group hasn't already matched to this query.
@@ -196,12 +193,14 @@ func main() {
 									botEnv.Log.Error("Group match was not found in Audit map.")
 								}
 							}
+							botEnv.AuditLock.RUnlock()
 							return nil
 						})
 						if err != nil {
 							return err
 						}
 					}
+					it.Close()
   				return nil
 				})
 				if errReIt != nil {
@@ -214,6 +213,7 @@ func main() {
 					"index_dur": startSearch.Sub(startIndex).String(),
 					"search_dur": stop.Sub(startSearch).String(),
 				}).Info("Audit ticker loop.")
+				index.Close()
 			case <- quit:
 				auditTicker.Stop()
 				return
