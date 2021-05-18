@@ -121,7 +121,7 @@ func replaceLevel(s string) (string, error) {
       return s, errors.New("Non-positive integer parsed from level field.")
     }
     after := strings.Join( fields[1:], " ")
-    return fmt.Sprintf("%s +MaxLevel:>=%d +MinLevel:<=%d %s", splits[0], num, num, after), nil
+    return fmt.Sprintf("%s +Group.MaximumLevel:>=%d +Group.MinimumLevel:<=%d %s", splits[0], num, num, after), nil
   // If unexpected splits are encountered, return error on multiple level fields.
   }
 }
