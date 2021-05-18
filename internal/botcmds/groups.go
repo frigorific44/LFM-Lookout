@@ -31,9 +31,11 @@ func Groups(session *discordgo.Session, message *discordgo.MessageCreate, env *b
     return
   }
   // With server index found, construct a formatted strings of the groups.
-  groups := ""
+  b := strings.Builder{}
   for _, sGroup := range serverMatch {
-    groups = groups + fmt.Sprintf("```%s```", sGroup.Group.String())
+    b.WriteString(sGroup.Group.String())
+    b.WriteString("\n\n")
   }
-  session.ChannelMessageSend(message.ChannelID, groups)
+  embed := discordgo.MessageEmbed{Title: server, Description: b.String()}
+  session.ChannelMessageSendEmbed(message.ChannelID, &embed)
 }

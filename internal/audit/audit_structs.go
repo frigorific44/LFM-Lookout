@@ -65,29 +65,24 @@ type Location struct {
 }
 
 func (group Group) String() string {
-  lines := []string{}
-  // Line of quest info, if there is a quest selected.
+  b := strings.Builder{}
+  // Line of quest info, and how long it has been active.
   if group.Quest != (Quest{}) {
-    lines = append(lines, group.Quest.String())
+    fmt.Fprintf(&b, "> %s, %s", group.Quest.Name, group.Quest.Patron)
+    if group.AdventureActive != 0 {
+      fmt.Fprintf(&b, " | *Active: %d minute(s)*", group.AdventureActive)
+    }
+    b.WriteString("\n")
   }
-  // Line of group members and their locations.
+  // Line with level range, number of members, and difficulty.
   numMembers := 1 + len(group.Members)
-  lines = append(lines, fmt.Sprintf("%d Member(s)", numMembers))
-  // Line of general info: Comment, Adventure Active, Difficulty, Level Range
-  info := []string{}
+  fmt.Fprintf(&b, "> **%d-%d** | %d Member(s) | %s", group.MinLevel, group.MaxLevel, numMembers, group.Difficulty)
+  // Line with comment.
   if group.Comment != "" {
-    info = append(info, group.Comment)
+     fmt.Fprintf(&b, "\n> %s", group.Comment)
   }
-  if group.AdventureActive != 0 {
-    active := fmt.Sprintf("Active: %d minute(s)", group.AdventureActive)
-    info = append(info, active)
-  }
-  info = append(info, group.Difficulty)
-  lvlRange := fmt.Sprintf("[%d–%d]", group.MinLevel, group.MaxLevel)
-  info = append(info, lvlRange)
-  lines = append(lines, strings.Join(info, " | "))
 
-  return strings.Join(lines, "\n")
+  return b.String()
 }
 
 func (quest Quest) String() string {
