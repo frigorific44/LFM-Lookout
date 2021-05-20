@@ -15,7 +15,13 @@ import (
 )
 
 
-var LookoutHelp string = `lookout Server:[string] Duration:[0h1m-24h0m] (level:[1-30]) (-/+)term (-/+)"a phrase"`
+var LookoutHelp = discordgo.MessageEmbed{
+  Title: "Lookout Command",
+  Description:
+  "lookout Server:[string] Duration:[0h1m-24h0m] (Level:[1-30]) (-/+)term (-/+)\"a phrase\"\n\n" +
+  "Saves the query so that for the specified duration, the user will be notified of any matching groups.\n" +
+  "Ex: `lo!lookout Server:Cannith Duration:5h Level:30 +Raid +\"Killing Time\"`",
+}
 // [prefix]lookout Server:[string] Duration:[0h1m-24h0m] (level:[1-30]) (-/+)term (-/+)"a phrase"
 // A lookout query requires specification of the server and the duration of the query.
 // Search terms and phrases will be searched across the whole of a group's

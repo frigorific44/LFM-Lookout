@@ -180,7 +180,7 @@ func (r *LoRepo) GetView(fn func(txn *badger.Txn) error) error {
 
 func (q LoQuery) String() string {
   qStrings := []string{}
-  qStrings = append(qStrings, "ID: " + fmt.Sprintf("%X", q.ID))
+  qStrings = append(qStrings, fmt.Sprintf("ID: %X", q.ID))
   qStrings = append(qStrings, "Query: \"" + q.Query + "\"")
 
   qStrings = append(qStrings, "Duration: " + q.TTL.String())

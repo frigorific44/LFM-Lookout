@@ -71,8 +71,7 @@ func main() {
 		log.Fatal(err)
 	}
 	// Embed BotEnv in LookoutEnv so BotEnv can be passed to commands.
-	cmdsString := "active\ncancel\ngroups\nlookout\nservers"
-	loEnv := LookoutEnv{Env: &botEnv, CmdsString: cmdsString}
+	loEnv := LookoutEnv{Env: &botEnv}
 	// Register the messageCreate func as a callback for MessageCreate events.
 	bot.AddHandler(loEnv.messageCreate)
 	// We only care about message events, so let's make that clear.
@@ -184,7 +183,7 @@ func main() {
 											break
 										}
 										r := lodb.GetIDFromKey(string(k))
-										m := fmt.Sprintf("**ID: ** %X\n```%s```", r, sGroup.Group.String())
+										m := fmt.Sprintf("**ID: %X**, %s\n%s", r, sGroup.Server, sGroup.Group.String())
 										bot.ChannelMessageSend(string(channel), m)
 										break
 									}
@@ -233,7 +232,6 @@ func main() {
 
 type LookoutEnv struct {
 	Env *botenv.BotEnv
-	CmdsString string
 }
 
 // This function will be called (due to AddHandler above) every time a new
@@ -259,10 +257,10 @@ func (env *LookoutEnv) messageCreate(s *dg.Session, m *dg.MessageCreate) {
 			if c == "help" {
 				switch len(strTokens) {
 				case 1:
-					s.ChannelMessageSend(m.ChannelID, env.CmdsString)
+					s.ChannelMessageSendEmbed(m.ChannelID, &botcmds.CommandsMsg)
 				case 2:
 					command, ok := botcmds.Commands[strings.ToLower(strTokens[1])]
-					if ok {s.ChannelMessageSend(m.ChannelID, command.HelpMsg)}
+					if ok {s.ChannelMessageSendEmbed(m.ChannelID, &command.HelpMsg)}
 				default:
 					return
 				}

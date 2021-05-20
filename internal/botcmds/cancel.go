@@ -12,7 +12,13 @@ import (
 )
 
 
-var CancelHelp string = "cancel [query id]\nCancels the specified query."
+var CancelHelp = discordgo.MessageEmbed{
+  Title: "Cancel Command",
+  Description:
+  "*[prefix]cancel [query id]*\n\n" +
+  "Cancels a user's query of the specified ID.\n" +
+  "Ex: `lo!cancel 00F`",
+}
 // [prefix]cancel [query id]
 // Removes the specified Lookout query for the query database if it exists and
 // belongs to the user.
