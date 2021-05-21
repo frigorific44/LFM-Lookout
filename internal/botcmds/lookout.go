@@ -15,6 +15,10 @@ import (
 )
 
 
+const (
+  queryLenMax int = 281
+)
+
 var LookoutHelp = discordgo.MessageEmbed{
   Title: "Lookout Command",
   Description:
@@ -35,17 +39,28 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
   fmt.Println("Lookout command received.")
   defer fmt.Println("Lookout command processed.")
   errMessage := "There was an error processing the query: %s"
+  // Check that the query isn't too large.
+  if len(message.Content) > queryLenMax {
+    session.ChannelMessageSend(message.ChannelID, fmt.Sprintf("Please keep queries below %d characters.", queryLenMax))
+    return
+  }
+  // Check for a "Fresh:" field which may interfere.
+  if strings.Contains(message.Content, "Fresh:") {
+    session.ChannelMessageSend(message.ChannelID, "Query cannot contain the field \"Fresh\".")
+    return
+  }
+  // Check for regex-delimitting forward-slashes.
+  if strings.ContainsRune(message.Content, '/') {
+    session.ChannelMessageSend(message.ChannelID, "Query cannoth contain the forward-slash character (\"/\").")
+    return
+  }
   s, err := translateQuery(message.Content[len(env.Config.Prefix)+len("lookout"):])
   if err != nil {
     session.ChannelMessageSend(message.ChannelID, fmt.Sprintf(errMessage, err.Error()))
     return
   }
-  // Verify the existence of a server field.
-  if !strings.Contains(s, "Server:") {
-    session.ChannelMessageSend(message.ChannelID, fmt.Sprintf(errMessage, "Missing a server field."))
-  }
-  // Check that Server matches an existing server.
-  re := regexp.MustCompile(`Server:\s*(\w+)`)
+  // Check that the server is specified, and matches an existing server.
+  re := regexp.MustCompile(`\+?Server:\s*(\w+)`)
   sMatches := re.FindStringSubmatch(s)
   if (sMatches != nil) {
     sMatch := sMatches[1]
@@ -56,6 +71,10 @@ func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *
       session.ChannelMessageSend(message.ChannelID, "The requested query does not seem to specify an existing server.")
       return
     }
+    s = re.ReplaceAllString(s, "+Server: $1")
+  } else {
+    session.ChannelMessageSend(message.ChannelID, fmt.Sprintf(errMessage, "Missing a server field."))
+    return
   }
   // Verify and parse out the duration field.
   durRegex := regexp.MustCompile(`\s+Duration:\s*(\S+)`)
@@ -114,10 +133,11 @@ func replaceLevel(s string) (string, error) {
   // Return the string if no level field found.
   if len(splits) < 2 {
     return s, nil
-  // If a level field is found, try parsing an integer from it.
   } else if len(splits) > 2 {
+    // If unexpected splits are encountered, return error on multiple level fields.
     return s, errors.New("Multiple fields found specifying level.")
   } else {
+    // If a level field is found, try parsing an integer from it.
     fields := strings.Fields(splits[1])
     num, err := strconv.ParseInt(fields[0], 10, 8)
     if err != nil {
@@ -128,6 +148,5 @@ func replaceLevel(s string) (string, error) {
     }
     after := strings.Join( fields[1:], " ")
     return fmt.Sprintf("%s +Group.MaximumLevel:>=%d +Group.MinimumLevel:<=%d %s", splits[0], num, num, after), nil
-  // If unexpected splits are encountered, return error on multiple level fields.
   }
 }
