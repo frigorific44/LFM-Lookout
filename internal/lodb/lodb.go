@@ -3,7 +3,6 @@ package lodb
 import(
   "errors"
   "fmt"
-  "strings"
   "time"
   "unicode/utf8"
 
@@ -176,16 +175,6 @@ func (r *LoRepo) Save(q LoQuery, tick rune) error {
 
 func (r *LoRepo) GetView(fn func(txn *badger.Txn) error) error {
   return r.db.View(fn)
-}
-
-func (q LoQuery) String() string {
-  qStrings := []string{}
-  qStrings = append(qStrings, fmt.Sprintf("ID: %X", q.ID))
-  qStrings = append(qStrings, "Query: \"" + q.Query + "\"")
-
-  qStrings = append(qStrings, "Duration: " + q.TTL.String())
-
-  return strings.Join(qStrings, ", ")
 }
 
 func EncodeFinalRune(id rune, tick rune) rune {

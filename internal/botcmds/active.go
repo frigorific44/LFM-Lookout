@@ -29,11 +29,8 @@ func Active(session *discordgo.Session, message *discordgo.MessageCreate, env *b
 
   if len(queries) > 0 {
     fields := make([]*discordgo.MessageEmbedField, len(queries))
-    queriesText := []string{}
     k := 0
     for i := range queries {
-      text := queries[i].String()
-      queriesText = append(queriesText, text)
       fields[k] = &discordgo.MessageEmbedField{
         Name: fmt.Sprintf("ID: %X", queries[i].ID),
         Value: fmt.Sprintf("%s\n*Duration:* %s", queries[i].Query, queries[i].TTL.String()),
