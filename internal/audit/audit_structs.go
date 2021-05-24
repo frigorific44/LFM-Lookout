@@ -39,10 +39,20 @@ type Group struct {
 
 type Quest struct {
   Name string `json:"Name"`
-  // CRHeroic int `json:"CR_Heroic"`
-  // CREpic int `json:"CR_Epic"`
+  // HeroicNormalCR uint8 `json:"HeroicNormalCR"`
+  // EpicNormalCR uint8 `json:"EpicNormalCR"`
+  // HeroicNormalXp int `json:"HeroicNormalXp"`
+  // HeroicHardXp int `json:"HeroicHardXp"`
+  // HeroicEliteXp int `json:"HeroicEliteXp"`
+  // EpicNormalXp int `json:"EpicNormalXp"`
+  // EpicHardXp int `json:"EpicHardXp"`
+  // EpicEliteXp int `json:"EpicEliteXp"`
+  // IsFreeToVip bool `json:"IsFreeToVip"`
+  AdventurePack string `json:"RequiredAdventurePack"`
+  AdventureArea string `json:"AdventureArea"`
+  QuestJournalGroup string `json:"QuestJournalGroup"`
+  GroupSize string `json:"GroupSize"`
   Patron string `json:"Patron"`
-  Type string `json:"Type"`
 }
 
 type Member struct {
@@ -52,6 +62,10 @@ type Member struct {
   // Race string `json:"Race"`
   // TotalLevel uint8 `json:"TotalLevel"`
   // Classes []Class `json:"Classes"`
+  // GroupId uint64 `json:"GroupId"`
+  // Guild string `json:"Guild"`
+  // InParty bool `json:"InParty"`
+  // HomeServer string `json:"HomeServer"`
 }
 
 // type Class struct {
@@ -62,6 +76,7 @@ type Member struct {
 type Location struct {
   Name string `json:"Name"`
   // IsPublicSpace bool `json:"IsPublicSpace"`
+  Region string `json:"Region"`
 }
 
 func (group Group) String() string {
@@ -83,14 +98,4 @@ func (group Group) String() string {
   }
 
   return b.String()
-}
-
-func (quest Quest) String() string {
-  s := fmt.Sprintf("%s: %s, %s", quest.Name, quest.Type, quest.Patron)
-  return s
-}
-
-func (member Member) String() string {
-  s := member.Location.Name
-  return s
 }
