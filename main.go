@@ -152,6 +152,7 @@ func main() {
 							} else {
 								search = bleve.NewSearchRequest(queryBase)
 							}
+							search.Fields = []string{"Server"}
 							searchResults, err := index.Search(search)
 							if err != nil {
 								botEnv.Log.Error(err)
@@ -160,35 +161,29 @@ func main() {
 							botEnv.AuditLock.RLock()
 							// Review each match and act accordingly.
 							for _, match := range searchResults.Hits {
-								// TODO: Check that matched group hasn't already matched to this query.
-								found := false
 								// Iterate through servers to find the corresponding group.
-								for _, server := range botEnv.Audit.Map {
-									sGroup, exists := server[match.ID]
-									if (exists) {
-										found = true
-										chanKey := strings.Replace(string(k), "query", "return", 1)
-										chanItem, err := txn.Get([]byte(chanKey))
-										if (err != nil) {
-											botEnv.Log.Error(err)
-											break
-										}
-									  var channel []byte
-									  errVal := chanItem.Value(func(val []byte) error {
-									    channel = append([]byte{}, val...)
-									    return nil
-									  })
-										if errVal != nil {
-											botEnv.Log.Error(errVal)
-											break
-										}
-										r := lodb.GetIDFromKey(string(k))
-										m := fmt.Sprintf("**ID: %X**, %s\n%s", r, sGroup.Server, sGroup.Group.String())
-										bot.ChannelMessageSend(string(channel), m)
+								sGroup, exists := botEnv.Audit.Map[match.Fields["Server"].(string)][match.ID]
+								if (exists) {
+									chanKey := strings.Replace(string(k), "query", "return", 1)
+									chanItem, err := txn.Get([]byte(chanKey))
+									if (err != nil) {
+										botEnv.Log.Error(err)
 										break
 									}
-								}
-								if !found {
+								  var channel []byte
+								  errVal := chanItem.Value(func(val []byte) error {
+								    channel = append([]byte{}, val...)
+								    return nil
+								  })
+									if errVal != nil {
+										botEnv.Log.Error(errVal)
+										break
+									}
+									r := lodb.GetIDFromKey(string(k))
+									m := fmt.Sprintf("**ID: %X**, %s\n%s", r, sGroup.Server, sGroup.Group.String())
+									bot.ChannelMessageSend(string(channel), m)
+									break
+								} else {
 									botEnv.Log.Error("Group match was not found in Audit map.")
 								}
 							}
