@@ -122,6 +122,7 @@ func main() {
 					botEnv.Log.Error(err)
 					continue
 				}
+				// fmt.Println(index.Fields())
 				startSearch := time.Now()
 				botEnv.TickLock.Lock()
 				currTick := botEnv.Tick
@@ -168,7 +169,7 @@ func main() {
 									chanItem, err := txn.Get([]byte(chanKey))
 									if (err != nil) {
 										botEnv.Log.Error(err)
-										break
+										continue
 									}
 								  var channel []byte
 								  errVal := chanItem.Value(func(val []byte) error {
@@ -177,12 +178,11 @@ func main() {
 								  })
 									if errVal != nil {
 										botEnv.Log.Error(errVal)
-										break
+										continue
 									}
 									r := lodb.GetIDFromKey(string(k))
 									m := fmt.Sprintf("**ID: %X**, %s\n%s", r, sGroup.Server, sGroup.Group.String())
 									bot.ChannelMessageSend(string(channel), m)
-									break
 								} else {
 									botEnv.Log.Error("Group match was not found in Audit map.")
 								}

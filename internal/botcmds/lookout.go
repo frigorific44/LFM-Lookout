@@ -27,7 +27,7 @@ var LookoutHelp = discordgo.MessageEmbed{
   " Along with terms and phrases searched against all of a group's text, additional fields can be specified—" +
   "similarly to the *Server* and *Duration* fields—with the field name directly followed by a colon.\n" +
   " Valid fields: *Group.Comment, Group.Difficulty, Group.AdventureActive," +
-  " Group.Quest.Name, Group.Quest.AdventurePack, Group.Quest.AdventureArea," +
+  " Group.Quest.Name, Group.Quest.RequiredAdventurePack, Group.Quest.AdventureArea," +
   " Group.Quest.QuestJournalGroup, Group.Quest.GroupSize, Group.Quest.Patron*\n" +
   "Ex: `lo!lookout Server:Cannith Duration:5h Level:30 +Raid +\"Killing Time\"`\n",
 }
@@ -152,6 +152,6 @@ func replaceLevel(s string) (string, error) {
       return s, errors.New("Non-positive integer parsed from level field.")
     }
     after := strings.Join( fields[1:], " ")
-    return fmt.Sprintf("%s +Group.MaxLevel:>=%d +Group.MinLevel:<=%d %s", splits[0], num, num, after), nil
+    return fmt.Sprintf("%s +Group.MaximumLevel:>=%d +Group.MinimumLevel:<=%d %s", splits[0], num, num, after), nil
   }
 }
