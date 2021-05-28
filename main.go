@@ -17,7 +17,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v3"
-	"github.com/blevesearch/bleve"
+	"github.com/blevesearch/bleve/v2"
 	dg "github.com/bwmarrin/discordgo"
 	"github.com/sirupsen/logrus"
 )
