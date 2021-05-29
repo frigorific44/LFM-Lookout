@@ -41,8 +41,6 @@ var LookoutHelp = discordgo.MessageEmbed{
 // the field name, a colon, and then the search term of phrase. Optional search
 // fields include Comment, Quest, Difficulty, and Patron.
 func Lookout(session *discordgo.Session, message *discordgo.MessageCreate, env *botenv.BotEnv)  {
-  fmt.Println("Lookout command received.")
-  defer fmt.Println("Lookout command processed.")
   errMessage := "There was an error processing the query: %s"
   // Check that the query isn't too large.
   if len(message.Content) > queryLenMax {

@@ -21,8 +21,6 @@ var GroupsHelp = discordgo.MessageEmbed{
 // Retrieves the server entry in audit for the specified server, if the entry
 // exists. Formats entry and then sends it to the requesting user.
 func Groups(session *discordgo.Session, message *discordgo.MessageCreate, env *botenv.BotEnv)  {
-  fmt.Println("Groups command received.")
-  defer fmt.Println("Groups command processed.")
   strTokens := strings.Fields(message.Content[len(env.Config.Prefix):])
   if len(strTokens) <= 1 {
     session.ChannelMessageSend(message.ChannelID, "No server argument found.")

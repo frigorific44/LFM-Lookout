@@ -23,8 +23,6 @@ var CancelHelp = discordgo.MessageEmbed{
 // Removes the specified Lookout query for the query database if it exists and
 // belongs to the user.
 func Cancel(session *discordgo.Session, message *discordgo.MessageCreate, env *botenv.BotEnv)  {
-  fmt.Println("Cancel command received.")
-  defer fmt.Println("Cancel command processed.")
   // Parse out the index rune.
   f := (strings.Fields(message.Content))
   id := f[len(f)-1]
