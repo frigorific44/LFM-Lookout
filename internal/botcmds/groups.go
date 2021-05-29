@@ -3,7 +3,6 @@ package botcmds
 import (
   "lfm_lookout/internal/botenv"
 
-  "fmt"
   "sort"
   "strings"
 
