@@ -12,6 +12,7 @@ import (
 type SearchableGroup struct {
 	Server string
 	Group audit.Group
+  Members int
   Fresh bool
 }
 

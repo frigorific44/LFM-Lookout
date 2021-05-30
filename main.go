@@ -104,7 +104,8 @@ func main() {
 				}
 				// Open a new index.
 				startIndex := time.Now()
-				mapping := bleve.NewIndexMapping()
+				// mapping := bleve.NewIndexMapping()
+				mapping, _ := buildIndexMapping()
 				index, err := bleve.NewMemOnly(mapping)
 				if err != nil {
 					botEnv.Log.Error(err)
@@ -156,7 +157,6 @@ func main() {
 							search.Fields = []string{"Server"}
 							searchResults, err := index.Search(search)
 							if err != nil {
-								botEnv.Log.Error(err)
 								return err
 							}
 							botEnv.AuditLock.RLock()
@@ -191,7 +191,8 @@ func main() {
 							return nil
 						})
 						if err != nil {
-							return err
+							botEnv.Log.Error(err)
+							continue
 						}
 					}
 					it.Close()
@@ -276,6 +277,7 @@ func AuditToMap(audit *audit.Audit) botenv.AuditMap {
 			newMap[server.Name][fmt.Sprintf("%d", group.Id)] = botenv.SearchableGroup{
 				Server: server.Name,
 				Group: group,
+				Members: 1 + len(group.Members),
 				Fresh: true,
 			}
 		}
@@ -299,6 +301,7 @@ func AuditToUpdatedMap(audit *audit.Audit, prevMap botenv.AuditMap) botenv.Audit
 			newMap[server.Name][id] = botenv.SearchableGroup{
 				Server: server.Name,
 				Group: group,
+				Members: 1 + len(group.Members),
 				Fresh: f,
 			}
 		}
