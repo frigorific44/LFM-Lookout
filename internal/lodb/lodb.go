@@ -3,6 +3,7 @@ package lodb
 import(
   "errors"
   "fmt"
+  "strings"
   "time"
   "unicode/utf8"
 
@@ -194,4 +195,8 @@ func NextTickRune(r rune) rune {
 func GetIDFromKey(k string) rune {
   r, _ := utf8.DecodeLastRuneInString(k)
   return r
+}
+
+func GetAuthFromKey(k string) string {
+  return strings.Split(k, "-")[1]
 }

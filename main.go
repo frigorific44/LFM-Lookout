@@ -130,13 +130,15 @@ func main() {
 				botEnv.Tick = lodb.NextTickRune(currTick)
 				botEnv.TickLock.Unlock()
 				// Run queries on current groups.
+				var delQ []string
 				errReIt := repo.GetView(func(txn *badger.Txn) error {
   				it := txn.NewIterator(badger.DefaultIteratorOptions)
 					prefix := []byte("query")
 					for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 						item := it.Item()
 						k := item.Key()
-						_, t := lodb.DecodeFinalRune(lodb.GetIDFromKey(string(k)))
+						r := lodb.GetIDFromKey(string(k))
+						_, t := lodb.DecodeFinalRune(r)
 						// If the query is from the next tick, defer until then.
 						botEnv.TickLock.RLock()
 						if t == botEnv.Tick {continue}
@@ -157,6 +159,7 @@ func main() {
 							search.Fields = []string{"Server"}
 							searchResults, err := index.Search(search)
 							if err != nil {
+								delQ = append(delQ, string(k))
 								return err
 							}
 							botEnv.AuditLock.RLock()
@@ -180,7 +183,6 @@ func main() {
 										botEnv.Log.Error(errVal)
 										continue
 									}
-									r := lodb.GetIDFromKey(string(k))
 									m := fmt.Sprintf("**ID: %X**, %s\n%s", r, sGroup.Server, sGroup.Group.String())
 									bot.ChannelMessageSend(string(channel), m)
 								} else {
@@ -209,6 +211,10 @@ func main() {
 					"search_dur": stop.Sub(startSearch).String(),
 				}).Info("Audit ticker loop.")
 				index.Close()
+				// Delete problematic queries.
+				for i := range delQ {
+					botEnv.Repo.Delete(lodb.GetAuthFromKey(delQ[i]), lodb.GetIDFromKey(delQ[i]))
+				}
 			case <- quit:
 				auditTicker.Stop()
 				return
