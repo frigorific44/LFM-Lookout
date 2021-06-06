@@ -16,28 +16,18 @@ import (
 	"syscall"
 	"time"
 
-	badger "github.com/dgraph-io/badger/v3"
 	"github.com/blevesearch/bleve/v2"
 	dg "github.com/bwmarrin/discordgo"
-	"github.com/sirupsen/logrus"
+	badger "github.com/dgraph-io/badger/v3"
+	"github.com/natefinch/lumberjack"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-
 func main() {
-	// Open file for logging.
-	currTime := time.Now()
-	logPath := "logs/"+currTime.Format("2006-01-02")+".log"
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		logrus.Fatal(err)
-	}
-	defer file.Close()
 	// Create a logging object which can be passed around (safely).
-	var log = &logrus.Logger{
-		Out: file,
-		Formatter: new(logrus.JSONFormatter),
-		Level: logrus.DebugLevel,
-	}
+	log := getLogger()
+	defer log.Sync()
 	log.Info("Logging to file.")
 	auditLock := new(sync.RWMutex)
 	tickLock := new(sync.RWMutex)
@@ -47,28 +37,36 @@ func main() {
 	// Load the config.json file.
 	io, err := ioutil.ReadFile("config.json")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(
+			"Error loading the config file.",
+			zap.Error(err))
 	}
 	// Load JSON into botenv:config.
 	json.Unmarshal(io, &botEnv.Config)
 	// Initialize LoRepo
 	repo, err := lodb.NewLoRepo("./badger")
 	if err != nil {
-		log.Panic(err)
+		log.Panic(
+			"Error initializing the query repository.",
+			zap.Error(err))
 	}
 	botEnv.Repo = repo
 	// TODO: Clean up orphan query and return entries.
 	// Get current groups from playeraudit.com
 	currAudit, err := audit.Groups()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(
+			"Error getting the groups audit.",
+			zap.Error(err))
 	} else {
 		botEnv.Audit = AuditToMap(currAudit)
 	}
 	// Create a new Discord session using the provided bot token.
 	bot, err := dg.New("Bot " + botEnv.Config.Token)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(
+			"Error initializing the bot.",
+			zap.Error(err))
 	}
 	// Embed BotEnv in LookoutEnv so BotEnv can be passed to commands.
 	loEnv := LookoutEnv{Env: &botEnv}
@@ -79,9 +77,10 @@ func main() {
 	// Open a websocket connection to Discord and begin listening.
 	err = bot.Open()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(
+			"Error connecting the bot.",
+			zap.Error(err))
 	}
-	log.Debug(botcmds.Commands)
 	// Periodically update botEnv.Audit.
 	auditTicker := time.NewTicker(time.Second * 31)
 	quit := make(chan bool)
@@ -89,13 +88,15 @@ func main() {
 		for {
 			select {
 			// Update audit, cull expired queries, then run queries on audit
-			case <- auditTicker.C:
+			case <-auditTicker.C:
 				// Update audit.
 				startTotal := time.Now()
 				newAudit, err := audit.Groups()
 				if err != nil {
-					botEnv.Log.Error(err)
-				} else{
+					botEnv.Log.Error(
+						"Error updating the audit.",
+						zap.Error(err))
+				} else {
 					botEnv.AuditLock.Lock()
 					prevAudit := botEnv.Audit
 					botEnv.Audit = AuditToUpdatedMap(newAudit, prevAudit)
@@ -108,7 +109,9 @@ func main() {
 				mapping, _ := buildIndexMapping()
 				index, err := bleve.NewMemOnly(mapping)
 				if err != nil {
-					botEnv.Log.Error(err)
+					botEnv.Log.Error(
+						"Error initializing the index.",
+						zap.Error(err))
 					continue
 				}
 				batch := index.NewBatch()
@@ -120,7 +123,9 @@ func main() {
 				}
 				botEnv.AuditLock.RUnlock()
 				if err := index.Batch(batch); err != nil {
-					botEnv.Log.Error(err)
+					botEnv.Log.Error(
+						"Error indexing batch of groups.",
+						zap.Error(err))
 					continue
 				}
 				// fmt.Println(index.Fields())
@@ -132,19 +137,22 @@ func main() {
 				// Run queries on current groups.
 				var delQ []string
 				errReIt := repo.GetView(func(txn *badger.Txn) error {
-  				it := txn.NewIterator(badger.DefaultIteratorOptions)
+					it := txn.NewIterator(badger.DefaultIteratorOptions)
 					prefix := []byte("query")
 					for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 						item := it.Item()
-						k := item.Key()
-						r := lodb.GetIDFromKey(string(k))
+						key := string(item.Key())
+						r := lodb.GetIDFromKey(key)
 						_, t := lodb.DecodeFinalRune(r)
 						// If the query is from the next tick, defer until then.
 						botEnv.TickLock.RLock()
-						if t == botEnv.Tick {continue}
+						if t == botEnv.Tick {
+							continue
+						}
 						botEnv.TickLock.RUnlock()
 						err := item.Value(func(v []byte) error {
-							queryBase := bleve.NewQueryStringQuery(string(v))
+							val := string(v)
+							queryBase := bleve.NewQueryStringQuery(val)
 							// If query is from the preceding tick, run against all
 							// groups, otherwise, run against only fresh ones.
 							var search *bleve.SearchRequest
@@ -157,9 +165,13 @@ func main() {
 								search = bleve.NewSearchRequest(queryBase)
 							}
 							search.Fields = []string{"Server"}
+							// TODO: Mark queries that take too long to search.
 							searchResults, err := index.Search(search)
 							if err != nil {
-								delQ = append(delQ, string(k))
+								botEnv.Log.Warn(
+									"Query resulted in error upon searching.",
+									zap.String("query", val))
+								delQ = append(delQ, key)
 								return err
 							}
 							botEnv.AuditLock.RLock()
@@ -167,65 +179,76 @@ func main() {
 							for _, match := range searchResults.Hits {
 								// Iterate through servers to find the corresponding group.
 								sGroup, exists := botEnv.Audit.Map[match.Fields["Server"].(string)][match.ID]
-								if (exists) {
-									chanKey := strings.Replace(string(k), "query", "return", 1)
+								if exists {
+									chanKey := strings.Replace(key, "query", "return", 1)
 									chanItem, err := txn.Get([]byte(chanKey))
-									if (err != nil) {
-										botEnv.Log.Error(err)
+									if err != nil {
+										botEnv.Log.Error(
+											"Error getting the channel id kv pair.",
+											zap.Error(err))
 										continue
 									}
-								  var channel []byte
-								  errVal := chanItem.Value(func(val []byte) error {
-								    channel = append([]byte{}, val...)
-								    return nil
-								  })
+									var channel []byte
+									errVal := chanItem.Value(func(val []byte) error {
+										channel = append([]byte{}, val...)
+										return nil
+									})
 									if errVal != nil {
-										botEnv.Log.Error(errVal)
+										botEnv.Log.Error(
+											"Error retrieving the channel id value.",
+											zap.Error(errVal))
 										continue
 									}
 									m := fmt.Sprintf("**ID: %X**, %s\n%s", r, sGroup.Server, sGroup.Group.String())
 									bot.ChannelMessageSend(string(channel), m)
 								} else {
-									botEnv.Log.Error("Group match was not found in Audit map.")
+									botEnv.Log.Warn(
+										"Group match was not found in Audit map.",
+										zap.String("query", val),
+										zap.String("server", match.Fields["Server"].(string)))
 								}
 							}
 							botEnv.AuditLock.RUnlock()
 							return nil
 						})
 						if err != nil {
-							botEnv.Log.Error(err)
+							botEnv.Log.Error(
+								"Error while using query's value.",
+								zap.Error(err))
 							continue
 						}
 					}
 					it.Close()
-  				return nil
+					return nil
 				})
 				if errReIt != nil {
-					botEnv.Log.Error(errReIt)
+					botEnv.Log.Error(
+						"Error while iterating through queries.",
+						zap.Error(errReIt))
 				}
 				stop := time.Now()
-				botEnv.Log.WithFields(logrus.Fields{
-					"total_dur": stop.Sub(startTotal).String(),
-					"audit_dur": startIndex.Sub(startTotal).String(),
-					"index_dur": startSearch.Sub(startIndex).String(),
-					"search_dur": stop.Sub(startSearch).String(),
-				}).Info("Audit ticker loop.")
+				botEnv.Log.Info(
+					"Ticker Loop",
+					zap.Duration("total", stop.Sub(startTotal)),
+					zap.Duration("auditing", startIndex.Sub(startTotal)),
+					zap.Duration("indexing", startSearch.Sub(startIndex)),
+					zap.Duration("searching", stop.Sub(startSearch)))
 				index.Close()
 				// Delete problematic queries.
 				for i := range delQ {
 					botEnv.Repo.Delete(lodb.GetAuthFromKey(delQ[i]), lodb.GetIDFromKey(delQ[i]))
 				}
-			case <- quit:
+			case <-quit:
 				auditTicker.Stop()
 				return
 			}
 		}
-	} ()
+	}()
 	defer close(quit)
 	// Wait here until CTRL-C or other term signal is received.
 	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
 	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-sc
 	// Cleanly close down the Discord session.
 	quit <- true
@@ -262,7 +285,9 @@ func (env *LookoutEnv) messageCreate(s *dg.Session, m *dg.MessageCreate) {
 					s.ChannelMessageSendEmbed(m.ChannelID, &botcmds.CommandsMsg)
 				case 2:
 					command, ok := botcmds.Commands[strings.ToLower(strTokens[1])]
-					if ok {s.ChannelMessageSendEmbed(m.ChannelID, &command.HelpMsg)}
+					if ok {
+						s.ChannelMessageSendEmbed(m.ChannelID, &command.HelpMsg)
+					}
 				default:
 					return
 				}
@@ -281,14 +306,14 @@ func AuditToMap(audit *audit.Audit) botenv.AuditMap {
 		newMap[server.Name] = make(map[string]botenv.SearchableGroup)
 		for _, group := range server.Groups {
 			newMap[server.Name][fmt.Sprintf("%d", group.Id)] = botenv.SearchableGroup{
-				Server: server.Name,
-				Group: group,
+				Server:  server.Name,
+				Group:   group,
 				Members: 1 + len(group.Members),
-				Fresh: true,
+				Fresh:   true,
 			}
 		}
 	}
-	return botenv.AuditMap{Map: newMap,}
+	return botenv.AuditMap{Map: newMap}
 }
 
 func AuditToUpdatedMap(audit *audit.Audit, prevMap botenv.AuditMap) botenv.AuditMap {
@@ -305,12 +330,51 @@ func AuditToUpdatedMap(audit *audit.Audit, prevMap botenv.AuditMap) botenv.Audit
 				f = true
 			}
 			newMap[server.Name][id] = botenv.SearchableGroup{
-				Server: server.Name,
-				Group: group,
+				Server:  server.Name,
+				Group:   group,
 				Members: 1 + len(group.Members),
-				Fresh: f,
+				Fresh:   f,
 			}
 		}
 	}
-	return botenv.AuditMap{Map: newMap,}
+	return botenv.AuditMap{Map: newMap}
+}
+
+func getLogger() *zap.Logger {
+	core := zapcore.NewCore(
+		getEncoder(),
+		getWriteSyncer(),
+		zap.InfoLevel,
+	)
+	return zap.New(core)
+}
+
+func getWriteSyncer() zapcore.WriteSyncer {
+	// lumberjack.Logger is already safe for concurrent use, so we don't need to
+	// lock it.
+	ws := zapcore.AddSync(&lumberjack.Logger{
+		Filename:   "./logs/bot.log",
+		MaxSize:    500, // megabytes
+		MaxBackups: 10,
+		MaxAge:     28, // days
+	})
+	return ws
+}
+
+func getEncoder() zapcore.Encoder {
+	encConfig := zapcore.EncoderConfig{
+		TimeKey:        "t",
+		LevelKey:       "lvl",
+		NameKey:        "logger",
+		CallerKey:      "caller",
+		FunctionKey:    zapcore.OmitKey,
+		MessageKey:     "msg",
+		StacktraceKey:  "stacktrace",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.LowercaseLevelEncoder,
+		EncodeTime:     zapcore.ISO8601TimeEncoder,
+		EncodeDuration: zapcore.StringDurationEncoder,
+		EncodeCaller:   zapcore.ShortCallerEncoder,
+	}
+	return zapcore.NewJSONEncoder(encConfig)
 }
