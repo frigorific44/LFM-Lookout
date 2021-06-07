@@ -1,4 +1,5 @@
 {
   "Token": "Bot Token Here",
-  "Prefix": "lo!"
+  "Prefix": "lo!",
+  "AuditPeriod": 60
 }
