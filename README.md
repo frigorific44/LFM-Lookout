@@ -14,7 +14,7 @@ With this repository's files downloaded, the only thing that you'll need to chan
 
 With a terminal open on the directory you downloaded the repository to, you can either `go run main.go`, or `go build main.go` and run the generated executable.
 
-In order to see your bot running, it will have to be invited to at least one server you are present in. From there, your can enter commands from one of the server's channels, or direct message your bot and issue commands from there.
+In order to see your bot running, it will have to be invited to at least one server you are present in. From there, you can enter commands from one of the server's channels, or direct message your bot and issue commands from there.
 
 
 
