@@ -136,10 +136,12 @@ func main() {
 				botEnv.TickLock.Unlock()
 				// Run queries on current groups.
 				var delQ []string
+				var qNum int
 				errReIt := repo.GetView(func(txn *badger.Txn) error {
 					it := txn.NewIterator(badger.DefaultIteratorOptions)
 					prefix := []byte("query")
 					for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+						qNum++
 						item := it.Item()
 						key := string(item.Key())
 						r := lodb.GetIDFromKey(key)
@@ -255,6 +257,11 @@ func main() {
 					zap.Duration("indexing", startSearch.Sub(startIndex)),
 					zap.Duration("searching", stop.Sub(startSearch)))
 				index.Close()
+				// Log some of the bot's stats.
+				botEnv.Log.Info(
+					"Bot Statistics",
+					zap.Int("guilds", len(bot.State.Ready.Guilds)),
+					zap.Int("queries", qNum))
 				// Delete problematic queries.
 				for i := range delQ {
 					botEnv.Repo.Delete(lodb.GetAuthFromKey(delQ[i]), lodb.GetIDFromKey(delQ[i]))
