@@ -152,6 +152,7 @@ func main() {
 						botEnv.TickLock.RUnlock()
 						err := item.Value(func(v []byte) error {
 							val := string(v)
+							qsStart := time.Now()
 							queryBase := bleve.NewQueryStringQuery(val)
 							// If query is from the preceding tick, run against all
 							// groups, otherwise, run against only fresh ones.
@@ -167,6 +168,17 @@ func main() {
 							search.Fields = []string{"Server"}
 							// TODO: Mark queries that take too long to search.
 							searchResults, err := index.Search(search)
+							qs := time.Since(qsStart)
+							if qs > (time.Millisecond * 50) {
+								botEnv.Log.Warn(
+									"Query took too long to search against.",
+									zap.String("query", val),
+									zap.Duration("search_t", qs))
+								delQ = append(delQ, key)
+							}
+							botEnv.Log.Debug(
+								"Query search.",
+								zap.Duration("Search_t", qs))
 							if err != nil {
 								botEnv.Log.Warn(
 									"Query resulted in error upon searching.",
@@ -175,32 +187,35 @@ func main() {
 								return err
 							}
 							botEnv.AuditLock.RLock()
+							mt := time.Now()
+							var b strings.Builder // For combining hits into a single message.
+							var channel []byte
+							if len(searchResults.Hits) > 0 {
+								chanKey := strings.Replace(key, "query", "return", 1)
+								chanItem, err := txn.Get([]byte(chanKey))
+								if err != nil {
+									botEnv.Log.Error(
+										"Error getting the channel id kv pair.",
+										zap.Error(err))
+									return err
+								}
+								errVal := chanItem.Value(func(val []byte) error {
+									channel = append([]byte{}, val...)
+									return nil
+								})
+								if errVal != nil {
+									botEnv.Log.Error(
+										"Error retrieving the channel id value.",
+										zap.Error(errVal))
+									return errVal
+								}
+							}
 							// Review each match and act accordingly.
 							for _, match := range searchResults.Hits {
-								// Iterate through servers to find the corresponding group.
 								sGroup, exists := botEnv.Audit.Map[match.Fields["Server"].(string)][match.ID]
 								if exists {
-									chanKey := strings.Replace(key, "query", "return", 1)
-									chanItem, err := txn.Get([]byte(chanKey))
-									if err != nil {
-										botEnv.Log.Error(
-											"Error getting the channel id kv pair.",
-											zap.Error(err))
-										continue
-									}
-									var channel []byte
-									errVal := chanItem.Value(func(val []byte) error {
-										channel = append([]byte{}, val...)
-										return nil
-									})
-									if errVal != nil {
-										botEnv.Log.Error(
-											"Error retrieving the channel id value.",
-											zap.Error(errVal))
-										continue
-									}
-									m := fmt.Sprintf("**ID: %X**, %s\n%s", r, sGroup.Server, sGroup.Group.String())
-									bot.ChannelMessageSend(string(channel), m)
+									m := fmt.Sprintf("**ID: %X**, %s\n%s\n", r, sGroup.Server, sGroup.Group.String())
+									b.WriteString(m)
 								} else {
 									botEnv.Log.Warn(
 										"Group match was not found in Audit map.",
@@ -208,6 +223,12 @@ func main() {
 										zap.String("server", match.Fields["Server"].(string)))
 								}
 							}
+							go func(channel string, message string) {
+								bot.ChannelMessageSend(channel, message)
+							}(string(channel), b.String())
+							botEnv.Log.Debug(
+								"Match iteration.",
+								zap.Duration("matches_t", time.Since(mt)))
 							botEnv.AuditLock.RUnlock()
 							return nil
 						})
