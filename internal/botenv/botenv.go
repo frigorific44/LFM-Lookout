@@ -34,4 +34,5 @@ type BotEnv struct {
 type Configuration struct {
 	Prefix string `json:"Prefix"`
 	Token  string `json:"Token"`
+	AuditPeriod int `json:"AuditPeriod"`
 }

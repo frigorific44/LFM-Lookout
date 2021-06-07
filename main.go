@@ -82,7 +82,10 @@ func main() {
 			zap.Error(err))
 	}
 	// Periodically update botEnv.Audit.
-	auditTicker := time.NewTicker(time.Second * 31)
+	if botEnv.Config.AuditPeriod < 30 {
+		log.Panic("Audit period is faster than the PlayerAudit API allows.")
+	}
+	auditTicker := time.NewTicker(time.Second * time.Duration(botEnv.Config.AuditPeriod))
 	quit := make(chan bool)
 	go func() {
 		for {
